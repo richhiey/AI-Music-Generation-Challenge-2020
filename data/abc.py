@@ -3,6 +3,7 @@ import glob
 import os 
 import json
 import tensorflow as tf
+from collections import Counter
 ####################################################################
 
 ## http://abcnotation.com/wiki/abc:standard:v2.1
@@ -82,6 +83,11 @@ def write_json(data, filename):
     with open(filename,'w') as f: 
         json.dump(data, f, indent=4) 
 
+def valid_data(x):
+    return (x['tune'] and 
+            x['conditional'].get('K') and 
+            x['conditional'].get('M') and 
+            x['conditional'].get('R'))
 
 ## Class for pre-processing data to extract meaningful features
 ## Currently. there are two pre-processors
@@ -120,7 +126,7 @@ class ABCPreProcessor(PreProcessor):
 
                 for tune in abc_tunes:
                     processed_tune = self.__preprocess_abc_tune__(tune.strip().split('\n'))
-                    if (processed_tune['metadata'] and processed_tune['conditional'] and processed_tune['tune']):
+                    if (valid_data(processed_tune)):
                         print('------------------- Extracted Tune --------------------')
                         print(processed_tune)
                         if data is not None:
@@ -163,13 +169,10 @@ class ABCPreProcessor(PreProcessor):
                     meters.append(v)
         
         vocab_set = set(list(tunes_str))
-        vocab_set.add('<s>')
-        vocab_set.add('<s>')
         print('Size of Vocabulary: ' + str(len(vocab_set)))
         print(vocab_set)
         
         keys_set = set(keys)
-        keys_set.remove('')
         print('Number of modal keys: ' + str(len(keys_set)))
         print(keys_set)
         
@@ -187,6 +190,8 @@ class ABCPreProcessor(PreProcessor):
         print(rhythms_set)
 
 
+
+
     def save_as_tfrecord_dataset(self):
         tokenizer = tf.keras.preprocessing.text.Tokenizer(filters=' ', lower=False, char_level=True)
         tunes = []
@@ -195,39 +200,48 @@ class ABCPreProcessor(PreProcessor):
         rhythms = []
         with open(self.json_path) as json_file: 
             data = json.load(json_file)
-            ## Initializing indexes of the dictionary
             for x in data:
-                if (x['tune'] and x['conditional'].get('K') and x['conditional'].get('M') and x['conditional'].get('R')):
-                    tunes.append(x['tune'])
+                if (valid_data(x)):
+                    tunes.append(x['tune'].strip())
                     keys.append(x['conditional']['K'])
                     meters.append(x['conditional']['M'])
                     rhythms.append(x['conditional']['R'])
+
         tokenizer.fit_on_texts(tunes)
         tunes_tensor = tokenizer.texts_to_sequences(tunes)
         tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(tunes_tensor, padding='post')
         keys_idx, keys_vocab = convert_labels_to_indices(keys)
         #print(keys_idx)
-        print(keys_vocab)
+        #print(keys_vocab)
         meters_idx, meters_vocab = convert_labels_to_indices(meters)
         #print(meters_idx)
-        print(meters_vocab)
+        #print(meters_vocab)
         rhythms_idx, rhythms_vocab = convert_labels_to_indices(rhythms)
         #print(rhythms_idx)
-        print(rhythms_vocab)
-        features_dataset = tf.data.Dataset.from_tensor_slices((tunes_tensor, keys_idx, meters_idx, rhythms_idx))
+        #print(rhythms_vocab)
+        features_dataset = tf.data.Dataset.from_tensor_slices((
+            tunes_tensor, 
+            keys_idx, 
+            meters_idx, 
+            rhythms_idx
+        ))
         print(features_dataset)
-        serialized_features_dataset = features_dataset.map(tf_serialize_example)
         
         def generator():
             for features in features_dataset:
                 yield serialize_example(*features)
 
         serialized_features_dataset = tf.data.Dataset.from_generator(
-            generator, output_types=tf.string, output_shapes=())
-    
+            generator,
+            output_types=tf.string,
+            output_shapes=()
+        )
+        print(serialized_features_dataset)    
 
+        print('Creating TFRecord File ...')
         writer = tf.data.experimental.TFRecordWriter(self.tfrecord_path)
         writer.write(serialized_features_dataset)
+        print('Done!')
 
 
 def convert_labels_to_indices(labels):
@@ -242,10 +256,10 @@ def serialize_example(feature0, feature1, feature2, feature3):
   # Create a dictionary mapping the feature name to the tf.Example-compatible
   # data type.
   feature = {
-      'feature0': _bytes_feature(tf.io.serialize_tensor(feature0)),
-      'feature1': _int64_feature(feature1),
-      'feature2': _int64_feature(feature2),
-      'feature3': _int64_feature(feature3),
+      'tune': _bytes_feature(tf.io.serialize_tensor(feature0)),
+      'key': _int64_feature(feature1),
+      'meter': _int64_feature(feature2),
+      'rhythm': _int64_feature(feature3),
   }
 
   # Create a Features message using tf.train.Example.
