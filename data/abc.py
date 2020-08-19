@@ -2,8 +2,9 @@
 import glob
 import os 
 import json
+
+import pandas as pd
 import tensorflow as tf
-from collections import Counter
 ####################################################################
 
 ## http://abcnotation.com/wiki/abc:standard:v2.1
@@ -49,7 +50,6 @@ conditional = {
 
 ## Helper function to extract reference field information into a processable
 ## format
-
 def extract_data_from_tune(tune, dictionary):
     data = {}
     data_idx = []
@@ -78,16 +78,16 @@ def separate_all_abc_tunes(abc_filepath):
     abc_tunes = list(filter(None, abc_tunes.split('\n\n')))
     return abc_tunes
 
+
 # function to add to JSON 
 def write_json(data, filename): 
     with open(filename,'w') as f: 
         json.dump(data, f, indent=4) 
 
+
 def valid_data(x):
-    return (x['tune'] and 
-            x['conditional'].get('K') and 
-            x['conditional'].get('M') and 
-            x['conditional'].get('R'))
+    return (x.get('tune') and x.get('K') and x.get('M') and x.get('R'))
+
 
 ## Class for pre-processing data to extract meaningful features
 ## Currently. there are two pre-processors
@@ -115,27 +115,32 @@ class PreProcessor(object):
 class ABCPreProcessor(PreProcessor):
 
     def process(self):
-        write_json([], self.json_path)
-        files = glob.glob(self.data_dir + '/**/*.abc', recursive = True)
-        
-        with open(self.json_path) as json_file: 
-            data = json.load(json_file)
-            for file_number, file in enumerate(files):
-                print('------ ' + str(file_number) + '. ' + file + ' ------')            
-                abc_tunes = separate_all_abc_tunes(file)
+        if not (os.path.exists(self.json_path)):
+            write_json([], self.json_path)
+            files = glob.glob(self.data_dir + '/**/*.abc', recursive = True)
+            
+            with open(self.json_path) as json_file: 
+                data = json.load(json_file)
+                for file_number, file in enumerate(files):
+                    print('------ ' + str(file_number) + '. ' + file + ' ------')            
+                    abc_tunes = separate_all_abc_tunes(file)
 
-                for tune in abc_tunes:
-                    processed_tune = self.__preprocess_abc_tune__(tune.strip().split('\n'))
-                    if (valid_data(processed_tune)):
-                        print('------------------- Extracted Tune --------------------')
+                    for tune in abc_tunes:
+                        processed_tune = self.__preprocess_abc_tune__(tune.strip().split('\n'))
                         print(processed_tune)
-                        if data is not None:
-                            data.append(processed_tune)
-                        else:
-                            data = [processed_tune]
-                        write_json(data, self.json_path)
+                        if (valid_data(processed_tune)):
+                            print('------------------- Extracted Tune --------------------')
+                            print(processed_tune)
+                            if data is not None:
+                                data.append(processed_tune)
+                            else:
+                                data = [processed_tune]
+                            write_json(data, self.json_path)
+                            self.num_files = self.num_files + 1
 
-        print('Number of tunes - ' + str(self.num_files))
+            print('Number of tunes - ' + str(self.num_files))
+        else:
+            print('The raw data has already been processed. Pre-processed information found at - ' + self.json_path)
 
 
     def __preprocess_abc_tune__(self, tune):
@@ -145,51 +150,11 @@ class ABCPreProcessor(PreProcessor):
         keys_to_remove = conditional_idx + metadata_idx
         abc_tune_str = extract_notes_from_tune(tune, keys_to_remove)
 
-        self.num_files = self.num_files + 1
-        return {'conditional': _conditional, 'metadata': _metadata, 'tune': abc_tune_str}
+        return {**{'tune': abc_tune_str}, **_conditional}
 
 
     def calculate_statistics(self):
-        with open(self.json_path) as json_file: 
-            data = json.load(json_file)
-        print('Length of data: ' + str(len(data)))
-
-        tunes_str = ''
-        keys = []
-        meters = []
-        rhythms = []
-        for i, item in enumerate(data):
-            tunes_str += item['tune']
-            for k, v in item['conditional'].items():
-                if k is 'K':
-                    keys.append(v)
-                if k is 'R':
-                    rhythms.append(v)
-                if k is 'M':
-                    meters.append(v)
-        
-        vocab_set = set(list(tunes_str))
-        print('Size of Vocabulary: ' + str(len(vocab_set)))
-        print(vocab_set)
-        
-        keys_set = set(keys)
-        print('Number of modal keys: ' + str(len(keys_set)))
-        print(keys_set)
-        
-        meters_set = set(meters)
-        meters_set.remove('')
-        meters_set.remove('C')
-        meters_set.remove('C|')
-        meters_set.add('4/4')
-        meters_set.add('2/2')
-        print('Number of musical meters: ' + str(len(meters_set)))
-        print(meters_set)
-        
-        rhythms_set = set(rhythms)
-        print('Number of rhythms: ' + str(len(rhythms_set)))
-        print(rhythms_set)
-
-
+        pass
 
 
     def save_as_tfrecord_dataset(self):
@@ -203,9 +168,9 @@ class ABCPreProcessor(PreProcessor):
             for x in data:
                 if (valid_data(x)):
                     tunes.append(x['tune'].strip())
-                    keys.append(x['conditional']['K'])
-                    meters.append(x['conditional']['M'])
-                    rhythms.append(x['conditional']['R'])
+                    keys.append(x['K'])
+                    meters.append(x['M'])
+                    rhythms.append(x['R'])
 
         tokenizer.fit_on_texts(tunes)
         tunes_tensor = tokenizer.texts_to_sequences(tunes)
