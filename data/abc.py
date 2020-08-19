@@ -55,8 +55,7 @@ conditional = {
 ## 2. AudioPreProcessor
 
 class PreProcessor(object):
-    def __init__(self, data_dir, output_dir, output_name):
-        self.data_dir = data_dir
+    def __init__(self, output_dir, output_name):
         self.num_files = 0
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
@@ -78,10 +77,10 @@ class ABCPreProcessor(PreProcessor):
         return processed_dataset
 
 
-    def process(self):
+    def process(self, data_dir):
         if not (os.path.exists(self.json_path)):
             write_json([], self.json_path)
-            files = glob.glob(self.data_dir + '/**/*.abc', recursive = True)
+            files = glob.glob(data_dir + '/**/*.abc', recursive = True)
             
             with open(self.json_path) as json_file: 
                 data = json.load(json_file)
@@ -175,8 +174,8 @@ class ABCPreProcessor(PreProcessor):
         return self.tfrecord_path
 
 
-    def load_tfrecord_dataset(self, tfrecord_path):
-        raw_dataset = tf.data.TFRecordDataset(tfrecord_path)
+    def load_tfrecord_dataset(self, _path=None):
+        raw_dataset = tf.data.TFRecordDataset(self.tfrecord_path)
 
         # Create a dictionary describing the features.
         tune_feature_description = {
@@ -189,8 +188,15 @@ class ABCPreProcessor(PreProcessor):
             # Parse the input tf.Example proto using the dictionary above.
             return tf.io.parse_single_example(example_proto, tune_feature_description)
 
-        parsed_image_dataset = raw_dataset.map(_parse_abc_function)
-        return parsed_image_dataset
+        parsed_dataset = raw_dataset.map(_parse_abc_function)
+        parsed_dataset = parsed_dataset.map(lambda x: [
+            tf.one_hot(x['tune'], musical_vocab_size),
+            tf.one_hot(x['rhythm'], rhythm_vocab_size),
+            tf.one_hot(x['meter'], meter_vocab_size),
+            tf.one_hot(x['key'], key_vocab_size),
+        ])
+        print(parsed_dataset)
+        return parsed_dataset
 
 
 
