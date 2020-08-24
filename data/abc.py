@@ -5,6 +5,9 @@ import json
 import glob
 import os 
 
+import numpy as np
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import tensorflow as tf
 from .constants import  METADATA_KEYS, CONDITIONAL_KEYS
@@ -77,16 +80,12 @@ class ABCPreProcessor(PreProcessor):
             }
             for k in ['K', 'M', 'R']:
                 feature_dictionaries[k] = create_vocabulary(data, k, self.output_dir)
- 
-
-            print(feature_dictionaries)
-            akajk
 
             features_dataset = tf.data.Dataset.from_tensor_slices((
-                tunes_tensor, 
-                keys_idx, 
-                meters_idx, 
-                rhythms_idx
+                feature_dictionaries['tune'], 
+                feature_dictionaries['K'],
+                feature_dictionaries['M'],
+                feature_dictionaries['R']
             ))
             print(features_dataset)
             
@@ -142,9 +141,9 @@ class ABCPreProcessor(PreProcessor):
             processed_dataset
             .map(self.__abc_map_fn__)
             .filter(self.__filter_fn__)
-            .shuffle(configs['shuffle_buffer'], reshuffle_each_iteration=True)
-            .repeat()
-            .batch(configs['batch_size'])
+            #.shuffle(configs['shuffle_buffer'], reshuffle_each_iteration=True)
+            #.repeat()
+            #.batch(configs['batch_size'])
         )
     # =============================================
 
@@ -170,7 +169,8 @@ class ABCPreProcessor(PreProcessor):
     # Filter elements from the raw dataset 
     # =============================================
     def __abc_filter_fn__(self, abc_tune_data):
-        pass
+        return True
+    # =============================================
 
 
     # =============================================
@@ -178,12 +178,87 @@ class ABCPreProcessor(PreProcessor):
     # dataset 
     # =============================================
     def __abc_map_fn__(self, abc_tune_data):
-        pass
+        abc_tune_data['tune'] = tf.io.parse_tensor(abc_tune_data['tune'], tf.int32)
+        return abc_tune_data
+    # =============================================
+
+
+    # =============================================
+    # Visualize different counts over the ABC dataset
+    # =============================================
+    def visualize_stats(self):
+        with open(self.json_path) as json_file:
+            data = json.load(json_file)
+        
+        freq = [len(x['tune']) for x in data]
+        freq.sort()
+        plot_with_matplotlib(
+            freq,
+            'Tune lengths over dataset',
+            'Tune index',
+            'Tune length'
+        )
+
+        category_tune_lengths = {}
+        tunes_in_each_category = {}
+        tunes_in_each_key = {}
+        tunes_in_each_meter = {}
+        rhythms = set([x['R'] for x in data])
+        keys = set([x['K'] for x in  data])
+        meters = set([x['M'] for x in  data])
+        
+        for rhythm in rhythms:
+            category_tune_lengths[rhythm] = 0
+            tunes_in_each_category[rhythm] = 0
+        for key in keys:
+            tunes_in_each_key[key] = 0
+        for meter in meters:
+            tunes_in_each_meter[meter] = 0
+
+        for x in data:
+            category_tune_lengths[x['R']] = max(len(x['tune']), category_tune_lengths[x['R']])
+            tunes_in_each_category[x['R']] += 1
+            tunes_in_each_key[x['K']] += 1
+            tunes_in_each_meter[x['M']] += 1
+
+        categorical_hist_with_matplotlib(
+            category_tune_lengths,
+            'Max tune length across categories'
+        )
+        categorical_hist_with_matplotlib(
+            tunes_in_each_category,
+            'Number of tunes in each category'
+        )
+        categorical_hist_with_matplotlib(
+            tunes_in_each_meter,
+            'Number of tunes in each meter'
+        )
+        categorical_hist_with_matplotlib(
+            tunes_in_each_key,
+            'Number of tunes in each key'
+        )
+
 
 
 #########################################################################
 # HELPER FUNCTIONS
 #########################################################################
+
+def plot_with_matplotlib(freq, title, xaxis, yaxis):
+    plt.plot(freq)
+    plt.title(title)
+    plt.xlabel(xaxis)
+    plt.ylabel(yaxis)
+    plt.show()
+
+def categorical_hist_with_matplotlib(category_dict, title):
+    names = list(category_dict.keys())
+    values = list(category_dict.values())
+    fig, axs = plt.subplots()
+    axs.bar(names, values, 1)
+    fig.suptitle(title)
+    plt.xticks(rotation='vertical')
+    plt.show()
 
 def create_tunes_vocabulary(data, output_dir):
     tokenizer = tf.keras.preprocessing.text.Tokenizer(
@@ -211,7 +286,7 @@ def create_vocabulary(data, key, output_dir):
         vocab,
         os.path.join(output_dir, key + '_vocab.json')
     )
-    return vocab
+    return idx
 
 def convert_labels_to_indices(labels):
     mapping = dict(zip(set(labels), range(len(labels))))
