@@ -1,12 +1,22 @@
 import os
+import json
 import tensorflow as tf
 
 
 class CharLSTM(tf.keras.Model):
 
-    def __init__(self, model_path, model_config, ):
+    def __init__(self, model_path, model_config, data_dimensions):
         super(CharLSTM, self).__init__()
-        self.model = self.__create_model__(1096, 66, 25, 9, 15)
+        self.model_config = MODEL_CONFIG
+        print(self.model_config)
+        self.model = self.__create_model__(
+            data_dimensions["max_timesteps"]["word_index"], 
+            data_dimensions["musical_vocab_size"],
+            data_dimensions["rhythm_vocab_size"], 
+            data_dimensions["meter_vocab_size"],
+            data_dimensions["key_vocab_size"]
+        )
+        self.model_path = model_path
 
 
     def call(self, inputs, training=False):
@@ -21,7 +31,7 @@ class CharLSTM(tf.keras.Model):
 
     def __create_model__(
             self, 
-            max_timesteps, 
+            max_timesteps,
             musical_vocab_size,
             rhythm_vocab_size,
             meter_vocab_size,

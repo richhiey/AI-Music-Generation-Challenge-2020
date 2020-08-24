@@ -1,59 +1,18 @@
-# Pre-processing utilities for ABC data
+####################################################################
+# -------------- Pre-processing utilities for ABC data -------------
+####################################################################
 import json
 import glob
 import os 
 
 import pandas as pd
 import tensorflow as tf
+from .constants import  METADATA_KEYS, CONDITIONAL_KEYS
 ####################################################################
 
-## http://abcnotation.com/wiki/abc:standard:v2.1
-## ---------------------------------------------
-## Reference Fields that contain  information about a transcribed tune
-
-metadata = {
-    'A':'area',
-    'B':'book',
-    'C':'composer',
-    'D':'discography',
-    'F':'file url',
-    'G':'group',
-    'H':'history',
-    'I':'instruction',
-    'L':'unit note length',
-    'm':'macro',
-    'N':'notes',
-    'O':'origin',
-    'P':'parts',
-    'Q':'tempo',
-    'r':'remark',
-    'S':'source',
-    's':'symbol line',
-    'T':'tune title',
-    'U':'user defined',
-    'V':'voice',
-    'W':'words',
-    'w':'words',
-    'X':'reference number',
-    'Z':'transcription',
-}
-
-
-## Reference fields to be used as conditioning for the symbolic models
-
-conditional = {
-    'K':'key',
-    'M':'meter',
-    'R':'rhythm',
-}
-
-
-## Class for pre-processing data to extract meaningful features
-## Currently. there are two pre-processors
-## ---------------------------------------------------------------
-## 1. ABCPreProcessor
-## 2. AudioPreProcessor
-
+## -------------------------------------------------------------------
+## Parent Class for pre-processing data to extract meaningful features
+## -------------------------------------------------------------------
 class PreProcessor(object):
     def __init__(self, output_dir, output_name):
         self.num_files = 0
@@ -64,19 +23,13 @@ class PreProcessor(object):
         self.tfrecord_path = os.path.join(output_dir, output_name + '.tfrecord')
 
 
+## -------------------------------------------------------------------
 ## Converts a directory of ABC Text Notation files to dataset of tunes
 ## -------------------------------------------------------------------
-## Step 1 - Extract Metadata information, index by ID
-## Step 2 - Extract conditioning infomation, index by ID
-## Step 3 - Extract Tune, index by ID
-## Step 4 - Write tune information to a CSV
-
 class ABCPreProcessor(PreProcessor):
-
-    def prepare_dataset(self, processed_dataset):
-        return processed_dataset
-
-
+    # =============================================
+    # Preprocess all ABC tunes in a directory
+    # =============================================
     def process(self, data_dir):
         if not (os.path.exists(self.json_path)):
             write_json([], self.json_path)
@@ -89,7 +42,9 @@ class ABCPreProcessor(PreProcessor):
                     abc_tunes = separate_all_abc_tunes(file)
 
                     for tune in abc_tunes:
-                        processed_tune = self.__preprocess_abc_tune__(tune.strip().split('\n'))
+                        processed_tune = self.__preprocess_abc_tune__(
+                            tune.strip().split('\n')
+                        )
                         print(processed_tune)
                         if (valid_data(processed_tune)):
                             print('------------------- Extracted Tune --------------------')
@@ -105,47 +60,28 @@ class ABCPreProcessor(PreProcessor):
         else:
             print('The raw data has already been processed. Pre-processed information found at - ' + self.json_path)
         return self.json_path
+    # =============================================
 
 
-    def __preprocess_abc_tune__(self, tune):
-        _metadata, metadata_idx = extract_data_from_tune(tune, metadata)
-        _conditional, conditional_idx = extract_data_from_tune(tune, conditional)
-
-        keys_to_remove = conditional_idx + metadata_idx
-        abc_tune_str = extract_notes_from_tune(tune, keys_to_remove)
-
-        return {**{'tune': abc_tune_str}, **_conditional}
-
-
-    def calculate_statistics(self):
-        pass
-
-
+    # =============================================
+    # Save a bunch of processed ABC tunes as a 
+    # TFRecord dataset
+    # =============================================
     def save_as_tfrecord_dataset(self):
         if not os.path.exists(self.tfrecord_path):
-            tokenizer = tf.keras.preprocessing.text.Tokenizer(filters=' ', lower=False, char_level=True)
-            with open(self.json_path) as json_file: 
+            with open(self.json_path) as json_file:
                 data = json.load(json_file)
 
-            tunes = get_key_data('tune', data)
-            tokenizer.fit_on_texts(tunes)
-            write_json(tokenizer.to_json(), os.path.join(self.output_dir, 'tunes_vocab.json'))
-            tunes_tensor = tokenizer.texts_to_sequences(tunes)
-            tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(tunes_tensor, padding='post')
-            
+            feature_dictionaries = {
+                'tune': create_tunes_vocabulary(data, self.output_dir)
+            }
+            for k in ['K', 'M', 'R']:
+                feature_dictionaries[k] = create_vocabulary(data, k, self.output_dir)
+ 
 
-            keys = get_key_data('K', data) 
-            keys_idx, keys_vocab = convert_labels_to_indices(keys)
-            write_json(keys_vocab, os.path.join(self.output_dir, 'keys_vocab.json'))
- 
-            meters = get_key_data('M', data)
-            meters_idx, meters_vocab = convert_labels_to_indices(meters)
-            write_json(meters_vocab, os.path.join(self.output_dir, 'meters_vocab.json'))
- 
-            rhythms = get_key_data('R', data)
-            rhythms_idx, rhythms_vocab = convert_labels_to_indices(rhythms)
-            write_json(rhythms_vocab, os.path.join(self.output_dir, 'rhythms_vocab.json'))
- 
+            print(feature_dictionaries)
+            akajk
+
             features_dataset = tf.data.Dataset.from_tensor_slices((
                 tunes_tensor, 
                 keys_idx, 
@@ -164,7 +100,6 @@ class ABCPreProcessor(PreProcessor):
                 output_shapes=()
             )
             print(serialized_features_dataset)    
-
             print('Creating TFRecord File ...')
             writer = tf.data.experimental.TFRecordWriter(self.tfrecord_path)
             writer.write(serialized_features_dataset)
@@ -172,8 +107,12 @@ class ABCPreProcessor(PreProcessor):
         else:
             print('The TFRecord file already exists at ' + self.tfrecord_path + ' ...')
         return self.tfrecord_path
+    # =============================================
 
 
+    # =============================================
+    # Load an existing TFRecord Dataset of ABC Tunes
+    # =============================================
     def load_tfrecord_dataset(self, _path=None):
         raw_dataset = tf.data.TFRecordDataset(self.tfrecord_path)
 
@@ -189,16 +128,90 @@ class ABCPreProcessor(PreProcessor):
             return tf.io.parse_single_example(example_proto, tune_feature_description)
 
         parsed_dataset = raw_dataset.map(_parse_abc_function)
-        parsed_dataset = parsed_dataset.map(lambda x: [
-            tf.one_hot(x['tune'], musical_vocab_size),
-            tf.one_hot(x['rhythm'], rhythm_vocab_size),
-            tf.one_hot(x['meter'], meter_vocab_size),
-            tf.one_hot(x['key'], key_vocab_size),
-        ])
         print(parsed_dataset)
         return parsed_dataset
+    # =============================================
 
 
+    # =============================================
+    # Run transformations on the dataset to prepare
+    # for use with deep learning models
+    # =============================================
+    def prepare_dataset(self, parsed_dataset, configs):
+        return (
+            processed_dataset
+            .map(self.__abc_map_fn__)
+            .filter(self.__filter_fn__)
+            .shuffle(configs['shuffle_buffer'], reshuffle_each_iteration=True)
+            .repeat()
+            .batch(configs['batch_size'])
+        )
+    # =============================================
+
+
+    # =============================================
+    # Preprocess a single ABC tune
+    # 1. Extract metadata information from the track
+    # 2. Extract conditioning signal information 
+    #    from the track
+    # =============================================
+    def __preprocess_abc_tune__(self, tune):
+        _metadata, metadata_idx = extract_data_from_tune(tune, METADATA_KEYS)
+        _conditional, conditional_idx = extract_data_from_tune(tune, CONDITIONAL_KEYS)
+
+        keys_to_remove = conditional_idx + metadata_idx
+        abc_tune_str = extract_notes_from_tune(tune, keys_to_remove)
+
+        return {**{'tune': abc_tune_str}, **_conditional}
+    # =============================================
+
+
+    # =============================================
+    # Filter elements from the raw dataset 
+    # =============================================
+    def __abc_filter_fn__(self, abc_tune_data):
+        pass
+
+
+    # =============================================
+    # Run transformations on elements in the raw
+    # dataset 
+    # =============================================
+    def __abc_map_fn__(self, abc_tune_data):
+        pass
+
+
+#########################################################################
+# HELPER FUNCTIONS
+#########################################################################
+
+def create_tunes_vocabulary(data, output_dir):
+    tokenizer = tf.keras.preprocessing.text.Tokenizer(
+        filters=' ',
+        lower=False,
+        char_level=True
+    )
+
+    tunes = get_key_data('tune', data)
+    tokenizer.fit_on_texts(tunes)
+    write_json(
+        tokenizer.to_json(),
+        os.path.join(output_dir, 'tunes_vocab.json')
+    )
+    tunes_tensor = tokenizer.texts_to_sequences(tunes)
+    tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(
+        tunes_tensor, padding='post'
+    )
+    return tunes_tensor 
+
+def create_vocabulary(data, key, output_dir):
+    keys = get_key_data(key, data) 
+    idx, vocab = convert_labels_to_indices(keys)
+    write_json(
+        vocab,
+        os.path.join(output_dir, key + '_vocab.json')
+    )
+    return vocab
 
 def convert_labels_to_indices(labels):
     mapping = dict(zip(set(labels), range(len(labels))))
@@ -217,12 +230,9 @@ def serialize_example(feature0, feature1, feature2, feature3):
       'meter': _int64_feature(feature2),
       'rhythm': _int64_feature(feature3),
   }
-
   # Create a Features message using tf.train.Example.
-
   example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
   return example_proto.SerializeToString()
-
 
 def tf_serialize_example(f0,f1,f2,f3):
   tf_string = tf.py_function(
@@ -274,6 +284,11 @@ def separate_all_abc_tunes(abc_filepath):
 def write_json(data, filename): 
     with open(filename,'w') as f: 
         json.dump(data, f, indent=4) 
+
+def read_json(filename):
+    with open(filename, 'r') as f:
+        json_data = json.load(f)
+    return json_data
 
 def valid_data(x):
     return (x.get('tune') and x.get('K') and x.get('M') and x.get('R'))
