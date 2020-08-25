@@ -48,16 +48,15 @@ class ABCPreProcessor(PreProcessor):
                         processed_tune = self.__preprocess_abc_tune__(
                             tune.strip().split('\n')
                         )
-                        print(processed_tune)
                         if (valid_data(processed_tune)):
-                            print('------------------- Extracted Tune --------------------')
+                            self.num_files = self.num_files + 1
+                            print('------------------- Extracted Tune ' + str(self.num_files) + ' --------------------')
                             print(processed_tune)
                             if data is not None:
                                 data.append(processed_tune)
                             else:
                                 data = [processed_tune]
                             write_json(data, self.json_path)
-                            self.num_files = self.num_files + 1
 
             print('Number of tunes - ' + str(self.num_files))
         else:
@@ -75,19 +74,18 @@ class ABCPreProcessor(PreProcessor):
             with open(self.json_path) as json_file:
                 data = json.load(json_file)
 
-            feature_dictionaries = {
-                'tune': create_tunes_vocabulary(data, self.output_dir)
-            }
-            for k in ['K', 'M', 'R']:
-                feature_dictionaries[k] = create_vocabulary(data, k, self.output_dir)
+                feature_dictionaries = {
+                    'tune': create_tunes_vocabulary(data, self.output_dir)
+                }
+                for k in ['K', 'M', 'R']:
+                    feature_dictionaries.update({k: create_vocabulary(data, k, self.output_dir)})
 
-            features_dataset = tf.data.Dataset.from_tensor_slices((
-                feature_dictionaries['tune'], 
-                feature_dictionaries['K'],
-                feature_dictionaries['M'],
-                feature_dictionaries['R']
-            ))
-            print(features_dataset)
+                features_dataset = tf.data.Dataset.from_tensor_slices((
+                    feature_dictionaries['tune'], 
+                    feature_dictionaries['K'],
+                    feature_dictionaries['M'],
+                    feature_dictionaries['R']
+                ))
             
             def generator():
                 for features in features_dataset:
@@ -118,9 +116,9 @@ class ABCPreProcessor(PreProcessor):
         # Create a dictionary describing the features.
         tune_feature_description = {
             'tune': tf.io.FixedLenFeature([], tf.string),
-            'key': tf.io.FixedLenFeature([], tf.int64),
-            'meter': tf.io.FixedLenFeature([], tf.int64),
-            'rhythm': tf.io.FixedLenFeature([], tf.int64),
+            'K': tf.io.FixedLenFeature([], tf.int64),
+            'M': tf.io.FixedLenFeature([], tf.int64),
+            'R': tf.io.FixedLenFeature([], tf.int64),
         }
         def _parse_abc_function(example_proto):
             # Parse the input tf.Example proto using the dictionary above.
@@ -136,11 +134,11 @@ class ABCPreProcessor(PreProcessor):
     # Run transformations on the dataset to prepare
     # for use with deep learning models
     # =============================================
-    def prepare_dataset(self, parsed_dataset, configs):
+    def prepare_dataset(self, parsed_dataset, configs = None):
         return (
-            processed_dataset
+            parsed_dataset
             .map(self.__abc_map_fn__)
-            .filter(self.__filter_fn__)
+            .filter(self.__abc_filter_fn__)
             #.shuffle(configs['shuffle_buffer'], reshuffle_each_iteration=True)
             #.repeat()
             #.batch(configs['batch_size'])
@@ -169,7 +167,7 @@ class ABCPreProcessor(PreProcessor):
     # Filter elements from the raw dataset 
     # =============================================
     def __abc_filter_fn__(self, abc_tune_data):
-        return True
+        return tf.math.count_nonzero(abc_tune_data['tune']) <= 512
     # =============================================
 
 
@@ -274,10 +272,8 @@ def create_tunes_vocabulary(data, output_dir):
         os.path.join(output_dir, 'tunes_vocab.json')
     )
     tunes_tensor = tokenizer.texts_to_sequences(tunes)
-    tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(
-        tunes_tensor, padding='post'
-    )
-    return tunes_tensor 
+    padded_tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(tunes_tensor, padding = 'post')
+    return padded_tunes_tensor
 
 def create_vocabulary(data, key, output_dir):
     keys = get_key_data(key, data) 
@@ -301,9 +297,9 @@ def serialize_example(feature0, feature1, feature2, feature3):
   # data type.
   feature = {
       'tune': _bytes_feature(tf.io.serialize_tensor(feature0)),
-      'key': _int64_feature(feature1),
-      'meter': _int64_feature(feature2),
-      'rhythm': _int64_feature(feature3),
+      'K': _int64_feature(feature1),
+      'M': _int64_feature(feature2),
+      'R': _int64_feature(feature3),
   }
   # Create a Features message using tf.train.Example.
   example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
