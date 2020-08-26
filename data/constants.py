@@ -37,3 +37,5 @@ CONDITIONAL_KEYS = {
     'M':'meter',
     'R':'rhythm',
 }
+
+MAX_TIMESTEPS_FOR_ABC_MODEL = 512

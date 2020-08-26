@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from .constants import  METADATA_KEYS, CONDITIONAL_KEYS
+from .constants import  METADATA_KEYS, CONDITIONAL_KEYS, \
+                        MAX_TIMESTEPS_FOR_ABC_MODEL
 ####################################################################
 
 ## -------------------------------------------------------------------
@@ -35,13 +36,14 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     def process(self, data_dir):
         if not (os.path.exists(self.json_path)):
+            print('Processing files and writing extracted information to JSON ..')
             write_json([], self.json_path)
             files = glob.glob(data_dir + '/**/*.abc', recursive = True)
             
             with open(self.json_path) as json_file: 
                 data = json.load(json_file)
                 for file_number, file in enumerate(files):
-                    print('------ ' + str(file_number) + '. ' + file + ' ------')            
+                    print('========== ' + str(file_number) + '. ' + file + ' ==========')            
                     abc_tunes = separate_all_abc_tunes(file)
 
                     for tune in abc_tunes:
@@ -71,36 +73,45 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     def save_as_tfrecord_dataset(self):
         if not os.path.exists(self.tfrecord_path):
+            print('Preparing to save extracted information into a TFRecord file at ' + self.tfrecord_path + ' ...')
             with open(self.json_path) as json_file:
                 data = json.load(json_file)
 
-                feature_dictionaries = {
-                    'tune': create_tunes_vocabulary(data, self.output_dir)
-                }
-                for k in ['K', 'M', 'R']:
-                    feature_dictionaries.update({k: create_vocabulary(data, k, self.output_dir)})
-
-                features_dataset = tf.data.Dataset.from_tensor_slices((
-                    feature_dictionaries['tune'], 
-                    feature_dictionaries['K'],
-                    feature_dictionaries['M'],
-                    feature_dictionaries['R']
-                ))
-            
-            def generator():
-                for features in features_dataset:
-                    yield serialize_example(*features)
-
-            serialized_features_dataset = tf.data.Dataset.from_generator(
-                generator,
-                output_types=tf.string,
-                output_shapes=()
+            tokenizer = create_tunes_tokenizer(
+                get_key_data('tune', data), 
+                self.output_dir
             )
-            print(serialized_features_dataset)    
+            key_vocab = create_vocabulary(
+                get_key_data('K', data),
+                os.path.join(self.output_dir, 'K_vocab.json')
+            )
+            meter_vocab = create_vocabulary(
+                get_key_data('M', data),
+                os.path.join(self.output_dir, 'M_vocab.json')
+            )
+            rhythm_vocab = create_vocabulary(
+                get_key_data('R', data),
+                os.path.join(self.output_dir, 'R_vocab.json')
+            )
+            print('Created required vocabularies for tokenizing the ABC tunes ...')
+            writer = tf.io.TFRecordWriter(self.tfrecord_path)
             print('Creating TFRecord File ...')
-            writer = tf.data.experimental.TFRecordWriter(self.tfrecord_path)
-            writer.write(serialized_features_dataset)
-            print('Done!')
+            for abc_track in data:
+                print('-------------------------------------------------------')
+                print(abc_track)
+
+                tokenized_tune = tokenizer.texts_to_sequences(abc_track['tune'])
+                # Flatten
+                tokenized_tune = [item for sublist in tokenized_tune for item in sublist]
+                sequence_example = serialize_example(
+                    tf.convert_to_tensor(tokenized_tune, dtype=tf.int64),
+                    tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
+                    tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
+                    tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64)
+                )
+                writer.write(sequence_example)
+            writer.close()
+            print('Done saving to TFRecord Dataset!')
         else:
             print('The TFRecord file already exists at ' + self.tfrecord_path + ' ...')
         return self.tfrecord_path
@@ -112,17 +123,27 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     def load_tfrecord_dataset(self, _path=None):
         raw_dataset = tf.data.TFRecordDataset(self.tfrecord_path)
-
-        # Create a dictionary describing the features.
-        tune_feature_description = {
-            'tune': tf.io.FixedLenFeature([], tf.string),
-            'K': tf.io.FixedLenFeature([], tf.int64),
-            'M': tf.io.FixedLenFeature([], tf.int64),
-            'R': tf.io.FixedLenFeature([], tf.int64),
+        sequence_features = {
+            'tune': tf.io.VarLenFeature(tf.int64)
         }
+        context_features = {
+            'K': tf.io.FixedLenFeature([], dtype=tf.int64),
+            'M': tf.io.FixedLenFeature([], dtype=tf.int64),
+            'R': tf.io.FixedLenFeature([], dtype=tf.int64),
+        }
+
         def _parse_abc_function(example_proto):
             # Parse the input tf.Example proto using the dictionary above.
-            return tf.io.parse_single_example(example_proto, tune_feature_description)
+            context, sequence = tf.io.parse_single_sequence_example(
+                example_proto,
+                context_features=context_features,
+                sequence_features=sequence_features
+            )
+            # sequence['tune'] = tf.io.decode_raw(sequence['tune'], tf.int64)
+            # context['K'] = tf.cast(context['K'], tf.int64)
+            # context['M'] = tf.cast(context['M'], tf.int64)
+            # context['R'] = tf.cast(context['R'], tf.int64)
+            return context, sequence
 
         parsed_dataset = raw_dataset.map(_parse_abc_function)
         print(parsed_dataset)
@@ -147,6 +168,34 @@ class ABCPreProcessor(PreProcessor):
 
 
     # =============================================
+    # Get data dimensions required to create inputs
+    # for models
+    # =============================================
+    def get_data_dimensions(self):
+        with open(os.path.join(self.output_dir, 'tunes_vocab.json'), 'r') as fp:
+            ## Extra steps to convert dict string into dict
+            len_tunes_vocab = len(
+                json.loads(
+                    json.loads(json.load(fp))['config']['word_index']
+                )
+            )
+        with open(os.path.join(self.output_dir, 'R_vocab.json'), 'r') as fp:
+            len_rhythm_vocab = len(json.loads(fp.read()))
+        with open(os.path.join(self.output_dir, 'M_vocab.json'), 'r') as fp:
+            len_meter_vocab = len(json.loads(fp.read()))
+        with open(os.path.join(self.output_dir, 'K_vocab.json'), 'r') as fp:
+            len_key_vocab = len(json.loads(fp.read()))
+        return {
+            'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL,
+            'tune_vocab_size': len_tunes_vocab,
+            'rhythm_vocab_size': len_rhythm_vocab,
+            'meter_vocab_size': len_meter_vocab,
+            'key_vocab_size': len_key_vocab
+        } 
+    # =============================================
+
+
+    # =============================================
     # Preprocess a single ABC tune
     # 1. Extract metadata information from the track
     # 2. Extract conditioning signal information 
@@ -166,8 +215,8 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     # Filter elements from the raw dataset 
     # =============================================
-    def __abc_filter_fn__(self, abc_tune_data):
-        return tf.math.count_nonzero(abc_tune_data['tune']) <= 512
+    def __abc_filter_fn__(self, context, sequence):
+        return tf.size(sequence['tune']) <= 512
     # =============================================
 
 
@@ -175,9 +224,8 @@ class ABCPreProcessor(PreProcessor):
     # Run transformations on elements in the raw
     # dataset 
     # =============================================
-    def __abc_map_fn__(self, abc_tune_data):
-        abc_tune_data['tune'] = tf.io.parse_tensor(abc_tune_data['tune'], tf.int32)
-        return abc_tune_data
+    def __abc_map_fn__(self, context, sequence):
+        return context, sequence
     # =============================================
 
 
@@ -187,54 +235,7 @@ class ABCPreProcessor(PreProcessor):
     def visualize_stats(self):
         with open(self.json_path) as json_file:
             data = json.load(json_file)
-        
-        freq = [len(x['tune']) for x in data]
-        freq.sort()
-        plot_with_matplotlib(
-            freq,
-            'Tune lengths over dataset',
-            'Tune index',
-            'Tune length'
-        )
-
-        category_tune_lengths = {}
-        tunes_in_each_category = {}
-        tunes_in_each_key = {}
-        tunes_in_each_meter = {}
-        rhythms = set([x['R'] for x in data])
-        keys = set([x['K'] for x in  data])
-        meters = set([x['M'] for x in  data])
-        
-        for rhythm in rhythms:
-            category_tune_lengths[rhythm] = 0
-            tunes_in_each_category[rhythm] = 0
-        for key in keys:
-            tunes_in_each_key[key] = 0
-        for meter in meters:
-            tunes_in_each_meter[meter] = 0
-
-        for x in data:
-            category_tune_lengths[x['R']] = max(len(x['tune']), category_tune_lengths[x['R']])
-            tunes_in_each_category[x['R']] += 1
-            tunes_in_each_key[x['K']] += 1
-            tunes_in_each_meter[x['M']] += 1
-
-        categorical_hist_with_matplotlib(
-            category_tune_lengths,
-            'Max tune length across categories'
-        )
-        categorical_hist_with_matplotlib(
-            tunes_in_each_category,
-            'Number of tunes in each category'
-        )
-        categorical_hist_with_matplotlib(
-            tunes_in_each_meter,
-            'Number of tunes in each meter'
-        )
-        categorical_hist_with_matplotlib(
-            tunes_in_each_key,
-            'Number of tunes in each key'
-        )
+            __visualize_dataset_stats__(data)
 
 
 
@@ -258,73 +259,71 @@ def categorical_hist_with_matplotlib(category_dict, title):
     plt.xticks(rotation='vertical')
     plt.show()
 
-def create_tunes_vocabulary(data, output_dir):
+def create_tunes_tokenizer(tunes, output_dir):
     tokenizer = tf.keras.preprocessing.text.Tokenizer(
         filters=' ',
         lower=False,
         char_level=True
     )
-
-    tunes = get_key_data('tune', data)
     tokenizer.fit_on_texts(tunes)
-    write_json(
-        tokenizer.to_json(),
-        os.path.join(output_dir, 'tunes_vocab.json')
+    vocab_fp = os.path.join(output_dir, 'tunes_vocab.json')
+    write_json(tokenizer.to_json(), vocab_fp)
+    return tokenizer
+
+def create_vocabulary(labels, vocab_fp):
+    vocab = dict(zip(set(labels), range(1, len(labels)+1))) 
+    write_json(vocab, vocab_fp)
+    return vocab
+
+def convert_labels_to_indices(labels, vocab):
+    return list(map(lambda x: vocab[x], labels))
+
+def serialize_example(tune, key, meter, rhythm):
+    """
+    Creates a tf.Example message ready to be written to a file.
+    """
+    # Create a dictionary mapping the feature name to the tf.Example-compatible
+    # data type.
+    print(tune)
+    print(key)
+    print(meter)
+    print(rhythm)
+
+    example_proto = tf.train.SequenceExample(
+        context = tf.train.Features(
+            feature = {
+                'K': _int64_feature(key),
+                'M': _int64_feature(meter),
+                'R': _int64_feature(rhythm)
+            }
+        ),
+        feature_lists = tf.train.FeatureLists(
+            feature_list = {
+                'tune': tf.train.FeatureList(
+                    feature = [
+                        tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=tune)
+                        )
+                    ]  
+                )
+            }
+        )
     )
-    tunes_tensor = tokenizer.texts_to_sequences(tunes)
-    padded_tunes_tensor = tf.keras.preprocessing.sequence.pad_sequences(tunes_tensor, padding = 'post')
-    return padded_tunes_tensor
-
-def create_vocabulary(data, key, output_dir):
-    keys = get_key_data(key, data) 
-    idx, vocab = convert_labels_to_indices(keys)
-    write_json(
-        vocab,
-        os.path.join(output_dir, key + '_vocab.json')
-    )
-    return idx
-
-def convert_labels_to_indices(labels):
-    mapping = dict(zip(set(labels), range(len(labels))))
-    outputs = list(map(lambda x: mapping[x], labels))
-    return outputs, mapping
-
-def serialize_example(feature0, feature1, feature2, feature3):
-  """
-  Creates a tf.Example message ready to be written to a file.
-  """
-  # Create a dictionary mapping the feature name to the tf.Example-compatible
-  # data type.
-  feature = {
-      'tune': _bytes_feature(tf.io.serialize_tensor(feature0)),
-      'K': _int64_feature(feature1),
-      'M': _int64_feature(feature2),
-      'R': _int64_feature(feature3),
-  }
-  # Create a Features message using tf.train.Example.
-  example_proto = tf.train.Example(features=tf.train.Features(feature=feature))
-  return example_proto.SerializeToString()
-
-def tf_serialize_example(f0,f1,f2,f3):
-  tf_string = tf.py_function(
-    serialize_example,
-    (f0,f1,f2,f3),  # pass these args to the above function.
-    tf.string)      # the return type is `tf.string`.
-  return tf.reshape(tf_string, ()) # The result is a scalar
+    return example_proto.SerializeToString()
 
 def _bytes_feature(value):
-  """Returns a bytes_list from a string / byte."""
-  if isinstance(value, type(tf.constant(0))):
-    value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
-  return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+    """Returns a bytes_list from a string / byte."""
+    if isinstance(value, type(tf.constant(0))):
+        value = value.numpy() # BytesList won't unpack a string from an EagerTensor.
+    return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
 
 def _float_feature(value):
-  """Returns a float_list from a float / double."""
-  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
+    """Returns a float_list from a float / double."""
+    return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
 
 def _int64_feature(value):
-  """Returns an int64_list from a bool / enum / int / uint."""
-  return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+    """Returns an int64_list from a bool / enum / int / uint."""
+    return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 ## Helper function to extract reference field information into a processable
 ## format
@@ -370,3 +369,52 @@ def get_key_data(key, data):
         if (valid_data(x)):
             temp.append(x[key])
     return temp
+
+def __visualize_dataset_stats__(data):
+    freq = [len(x['tune']) for x in data]
+    freq.sort()
+    plot_with_matplotlib(
+        freq,
+        'Tune lengths over dataset',
+        'Tune index',
+        'Tune length'
+    )
+
+    category_tune_lengths = {}
+    tunes_in_each_category = {}
+    tunes_in_each_key = {}
+    tunes_in_each_meter = {}
+    rhythms = set([x['R'] for x in data])
+    keys = set([x['K'] for x in  data])
+    meters = set([x['M'] for x in  data])
+    
+    for rhythm in rhythms:
+        category_tune_lengths[rhythm] = 0
+        tunes_in_each_category[rhythm] = 0
+    for key in keys:
+        tunes_in_each_key[key] = 0
+    for meter in meters:
+        tunes_in_each_meter[meter] = 0
+
+    for x in data:
+        category_tune_lengths[x['R']] = max(len(x['tune']), category_tune_lengths[x['R']])
+        tunes_in_each_category[x['R']] += 1
+        tunes_in_each_key[x['K']] += 1
+        tunes_in_each_meter[x['M']] += 1
+
+    categorical_hist_with_matplotlib(
+        category_tune_lengths,
+        'Max tune length across categories'
+    )
+    categorical_hist_with_matplotlib(
+        tunes_in_each_category,
+        'Number of tunes in each category'
+    )
+    categorical_hist_with_matplotlib(
+        tunes_in_each_meter,
+        'Number of tunes in each meter'
+    )
+    categorical_hist_with_matplotlib(
+        tunes_in_each_key,
+        'Number of tunes in each key'
+    )
