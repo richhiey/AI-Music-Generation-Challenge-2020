@@ -8,6 +8,7 @@ class CharLSTM(tf.keras.Model):
     def __init__(self, model_path, data_dimensions):
         super(CharLSTM, self).__init__()
         self.data_dimensions = data_dimensions
+
         self.model = self.__create_model__(
             data_dimensions["max_timesteps"], 
             data_dimensions["tune_vocab_size"],
@@ -26,55 +27,77 @@ class CharLSTM(tf.keras.Model):
             meter_vocab_size,
             key_vocab_size
         ):
-        musical_tokens = tf.keras.Input(shape=(max_timesteps, tune_vocab_size,))
-        rhythm_signal = tf.keras.Input(shape=(rhythm_vocab_size,))
-        meter_signal = tf.keras.Input(shape=(meter_vocab_size,))
-        key_signal = tf.keras.Input(shape=(key_vocab_size,))
+        tune = tf.keras.Input(shape=(512,1))
+        rhythm = tf.keras.Input(shape=(1,))
+        meter = tf.keras.Input(shape=(1,))
+        key = tf.keras.Input(shape=(1,))
+        print('---------- ' + 'Input ' + '----------')
+        print(tune)
+        print(rhythm)
+        print(key)
+        print(meter)
 
-        rhythm_stack = tf.stack([rhythm_signal] * max_timesteps)
-        meter_stack = tf.stack([meter_signal] * max_timesteps)
-        key_stack = tf.stack([key_signal] * max_timesteps)
+        print('---------- ' + 'Context ' + '----------')
+        rhythm_tensor = tf.keras.backend.repeat(rhythm, 512)
+        rhythm_embedding = tf.keras.layers.Embedding(
+            input_dim=rhythm_vocab_size,
+            output_dim=16,
+        )(rhythm_tensor)
+        print(rhythm_embedding)
 
-        context_signal = tf.concat(
-            [rhythm_stack, meter_stack, key_stack],
-            axis=-1
+        key_tensor = tf.keras.backend.repeat(key, 512)
+        key_embedding = tf.keras.layers.Embedding(
+            input_dim=key_vocab_size,
+            output_dim=16,
+        )(key_tensor)
+        print(key_embedding)
+
+        meter_tensor = tf.keras.backend.repeat(meter, 512)
+        meter_embedding = tf.keras.layers.Embedding(
+            input_dim=meter_vocab_size,
+            output_dim=16,
+        )(meter_tensor)
+        print(meter_embedding)
+        context = tf.keras.layers.Concatenate(axis=-1)(
+            [rhythm_embedding, meter_embedding, key_embedding]
         )
-        input_signal = tf.concat(
-            [
-                tf.keras.preprocessing.sequence.pad_sequences(
-                    tf.transpose(
-                        musical_tokens,
-                        perm=[1,0,2]
-                    ),
-                    maxlen=self.data_dimensions['max_timesteps']
-                ), context_signal
-            ],
-            axis = -1
-        )
-        print(input_signal)
 
-        lstm_layer = tf.keras.layers.LSTM(max_timesteps)
-        lstm_output = lstm_layer(input_signal)
-        dense = tf.keras.layers.Dense(512)
-        dense_output = dense(lstm_output)
-        next_tokens = tf.keras.layers.Dense(tune_vocab_size)(dense_output)
+        tune_embedding = tf.keras.layers.Embedding(
+            input_dim=tune_vocab_size,
+            output_dim=32
+        )(tune)
+
+        print('---------- ' + 'Embeddings ' + '----------')
+        print(context)
+        print(tune_embedding)
+
+        full_input = tf.keras.layers.Concatenate(axis=-1)(
+            [tune_embedding, context]
+        )
+        print(full_input)
+        squeezed = tf.keras.layers.Lambda(lambda x: tf.keras.backend.squeeze(x, 2))(full_input)
+        print(squeezed)
+        print('-------------------------------')
+
+        lstm_layer = tf.keras.layers.LSTM(128, return_sequences=True)
+        lstm_output = lstm_layer(squeezed)
+        print(lstm_output)
+        dense = tf.keras.layers.Dense(tune_vocab_size)
+        next_tokens = dense(lstm_output)
         print(next_tokens)
         model = tf.keras.Model(
-            inputs=[musical_tokens, rhythm_signal, meter_signal, key_signal],
-            outputs=[next_tokens],
+            inputs=[tune, rhythm, meter, key],
+            outputs=next_tokens,
         )
         return model
 
 
     def call(self, context, sequence, training=False):
         return self.model([
-            tf.one_hot(
-                tf.sparse.to_dense(sequence['tune']),
-                self.data_dimensions["tune_vocab_size"]
-            ),
-            tf.one_hot(context['R'], self.data_dimensions["rhythm_vocab_size"]),
-            tf.one_hot(context['M'], self.data_dimensions["meter_vocab_size"]),
-            tf.one_hot(context['K'], self.data_dimensions["key_vocab_size"])
+            tf.reshape(tf.sparse.to_dense(sequence['tune']),(-1, 512, 1)), 
+            context['R'],
+            context['M'],
+            context['K']
         ])
 
 

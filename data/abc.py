@@ -99,17 +99,24 @@ class ABCPreProcessor(PreProcessor):
             for abc_track in data:
                 print('-------------------------------------------------------')
                 print(abc_track)
-
-                tokenized_tune = tokenizer.texts_to_sequences(abc_track['tune'])
-                # Flatten
-                tokenized_tune = [item for sublist in tokenized_tune for item in sublist]
-                sequence_example = serialize_example(
-                    tf.convert_to_tensor(tokenized_tune, dtype=tf.int64),
-                    tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
-                    tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
-                    tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64)
-                )
-                writer.write(sequence_example)
+                if (len(abc_track['tune']) <= 512):
+                    tokenized_tune = tokenizer.texts_to_sequences(abc_track['tune'])
+                    # Flatten
+                    tokenized_tune = [item for sublist in tokenized_tune for item in sublist]
+                    sequence_example = serialize_example(
+                        tf.pad(
+                            tf.convert_to_tensor(
+                                tokenized_tune,
+                                dtype=tf.int64
+                            ),
+                            [[0, 512 - len(tokenized_tune)]],
+                            mode='CONSTANT'
+                        ),
+                        tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
+                        tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
+                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64)
+                    )
+                    writer.write(sequence_example)
             writer.close()
             print('Done saving to TFRecord Dataset!')
         else:
@@ -158,11 +165,10 @@ class ABCPreProcessor(PreProcessor):
     def prepare_dataset(self, parsed_dataset, configs = None):
         return (
             parsed_dataset
-            .map(self.__abc_map_fn__)
             .filter(self.__abc_filter_fn__)
-            #.shuffle(configs['shuffle_buffer'], reshuffle_each_iteration=True)
-            #.repeat()
-            #.batch(configs['batch_size'])
+            .map(self.__abc_map_fn__)
+            .batch(256)
+            .repeat()
         )
     # =============================================
 
@@ -226,6 +232,16 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     def __abc_map_fn__(self, context, sequence):
         return context, sequence
+    # =============================================
+
+
+    # =============================================
+    # Pad sequences 
+    # =============================================
+    def pad_sequences(self, dataset):
+        sequences = list(dataset.as_numpy_iterator())
+        padded_sequences = tf.keras.preprocessing.sequence.pad_sequences(sequences, padding='post')
+        return tf.data.Dataset.from_tensor_slices(padded_sequences)
     # =============================================
 
 
