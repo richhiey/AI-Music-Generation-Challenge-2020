@@ -47,3 +47,7 @@ gradleBuild
 Podfile.lock
 Pods
 xcuserdata
+# Project
+ckpt/
+tensorboard/
+configs/

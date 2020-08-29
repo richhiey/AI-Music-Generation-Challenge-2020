@@ -96,8 +96,8 @@ class ABCPreProcessor(PreProcessor):
             print('Created required vocabularies for tokenizing the ABC tunes ...')
             writer = tf.io.TFRecordWriter(self.tfrecord_path)
             print('Creating TFRecord File ...')
-            for abc_track in data:
-                print('-------------------------------------------------------')
+            for i, abc_track in enumerate(data):
+                print('------------- Serializing example ' + str(i) + ' -------------')
                 print(abc_track)
                 if (len(abc_track['tune']) <= 512):
                     tokenized_tune = tokenizer.texts_to_sequences(abc_track['tune'])
@@ -106,7 +106,15 @@ class ABCPreProcessor(PreProcessor):
                     sequence_example = serialize_example(
                         tf.pad(
                             tf.convert_to_tensor(
-                                tokenized_tune,
+                                tokenized_tune[:len(tokenized_tune)-1],
+                                dtype=tf.int64
+                            ),
+                            [[0, 512 - len(tokenized_tune)]],
+                            mode='CONSTANT'
+                        ),
+                        tf.pad(
+                            tf.convert_to_tensor(
+                                tokenized_tune[1:],
                                 dtype=tf.int64
                             ),
                             [[0, 512 - len(tokenized_tune)]],
@@ -114,7 +122,8 @@ class ABCPreProcessor(PreProcessor):
                         ),
                         tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
                         tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
-                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64)
+                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
+                        tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
                     )
                     writer.write(sequence_example)
             writer.close()
@@ -131,12 +140,14 @@ class ABCPreProcessor(PreProcessor):
     def load_tfrecord_dataset(self, _path=None):
         raw_dataset = tf.data.TFRecordDataset(self.tfrecord_path)
         sequence_features = {
-            'tune': tf.io.VarLenFeature(tf.int64)
+            'input': tf.io.VarLenFeature(tf.int64),
+            'output': tf.io.VarLenFeature(tf.int64),
         }
         context_features = {
             'K': tf.io.FixedLenFeature([], dtype=tf.int64),
             'M': tf.io.FixedLenFeature([], dtype=tf.int64),
             'R': tf.io.FixedLenFeature([], dtype=tf.int64),
+            'tune_length': tf.io.FixedLenFeature([], dtype=tf.int64),
         }
 
         def _parse_abc_function(example_proto):
@@ -167,7 +178,7 @@ class ABCPreProcessor(PreProcessor):
             parsed_dataset
             .filter(self.__abc_filter_fn__)
             .map(self.__abc_map_fn__)
-            .batch(256)
+            .batch(32)
             .repeat()
         )
     # =============================================
@@ -222,7 +233,7 @@ class ABCPreProcessor(PreProcessor):
     # Filter elements from the raw dataset 
     # =============================================
     def __abc_filter_fn__(self, context, sequence):
-        return tf.size(sequence['tune']) <= 512
+        return tf.size(sequence['input']) <= 512
     # =============================================
 
 
@@ -294,34 +305,37 @@ def create_vocabulary(labels, vocab_fp):
 def convert_labels_to_indices(labels, vocab):
     return list(map(lambda x: vocab[x], labels))
 
-def serialize_example(tune, key, meter, rhythm):
+def serialize_example(_input, _output, key, meter, rhythm, tune_length):
     """
     Creates a tf.Example message ready to be written to a file.
     """
     # Create a dictionary mapping the feature name to the tf.Example-compatible
     # data type.
-    print(tune)
-    print(key)
-    print(meter)
-    print(rhythm)
-
     example_proto = tf.train.SequenceExample(
         context = tf.train.Features(
             feature = {
                 'K': _int64_feature(key),
                 'M': _int64_feature(meter),
-                'R': _int64_feature(rhythm)
+                'R': _int64_feature(rhythm),
+                'tune_length': _int64_feature(tune_length),
             }
         ),
         feature_lists = tf.train.FeatureLists(
             feature_list = {
-                'tune': tf.train.FeatureList(
+                'input': tf.train.FeatureList(
                     feature = [
                         tf.train.Feature(
-                            int64_list=tf.train.Int64List(value=tune)
+                            int64_list=tf.train.Int64List(value=_input)
                         )
                     ]  
-                )
+                ),
+                'output': tf.train.FeatureList(
+                    feature = [
+                        tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=_output)
+                        )
+                    ]  
+                ),
             }
         )
     )
