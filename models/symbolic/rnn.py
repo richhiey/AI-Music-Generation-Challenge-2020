@@ -6,11 +6,12 @@ import tensorflow as tf
 
 class CharLSTM(tf.keras.Model):
 
-    def __init__(self, model_path, data_dimensions = None):
+    def __init__(self, model_path, data_dimensions):
         super(CharLSTM, self).__init__()
+        
         self.data_dimensions = data_dimensions
         self.model_path = model_path
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+
         self.tensorboard_logdir = os.path.join(
             model_path,
             'tensorboard',
@@ -20,15 +21,21 @@ class CharLSTM(tf.keras.Model):
             os.path.join(self.tensorboard_logdir, 'metrics')
         )
         self.file_writer.set_as_default()
-        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 
-        self.model = self.__create_model__(
-            data_dimensions["max_timesteps"], 
-            data_dimensions["tune_vocab_size"],
-            data_dimensions["rhythm_vocab_size"], 
-            data_dimensions["meter_vocab_size"],
-            data_dimensions["key_vocab_size"]
-        )
+        model_config_path = os.path.join(model_path, 'char_lstm.json', 'r')
+        if os.path.exists(model_configs)
+            with open(model_config_path, 'r') as fp:
+                model_configs = json.load(fp)    
+        self.model = self.__create_model__(model_configs, data_dimensions)
+
+        
+        tokenizer_path = os.path.join(self.model_path, 'tunes_vocab.json')
+        if os.path.exists(tokenizer_path):
+            with open(tokenizer_path, 'r') as fp:
+                self.tunes_tokenizer = tf.keras.preprocessing.text.tokenizer_from_json(json.load(fp))
+
+        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -39,59 +46,52 @@ class CharLSTM(tf.keras.Model):
             os.path.join(self.model_path, 'ckpt'),
             max_to_keep = 3
         )
-        tokenizer_path = os.path.join(self.model_path, 'tunes_vocab.json')
-        with open(tokenizer_path, 'r') as fp:
-            self.tunes_tokenizer = tf.keras.preprocessing.text.tokenizer_from_json(json.load(fp))
-        self.idx_to_music = self.tunes_tokenizer.index_word
-        print(self.idx_to_music)
 
 
-    def __create_model__(
-            self, 
-            max_timesteps,
-            tune_vocab_size,
-            rhythm_vocab_size,
-            meter_vocab_size,
-            key_vocab_size
-        ):
+    def __create_model__(self, model_configs, data_dimensions):
         #----------------------------------------
-        tune = tf.keras.Input(shape=(512 - 1, 1))
-        rhythm = tf.keras.Input(shape=(1,))
-        meter = tf.keras.Input(shape=(1,))
-        key = tf.keras.Input(shape=(1,))
-        tune_length = tf.keras.Input(shape=(1,))
+        tune = tf.keras.Input(
+            shape = (data_dimensions['max_timesteps'], 1)
+        )
+        rhythm = tf.keras.Input(shape = (1,))
+        meter = tf.keras.Input(shape = (1,))
+        key = tf.keras.Input(shape = (1,))
+        tune_length = tf.keras.Input(shape = (1,))
         #----------------------------------------
         rhythm_embedding = tf.keras.layers.Embedding(
-            input_dim=rhythm_vocab_size + 1,
-            output_dim=16,
-            name='rhythm_embedding'
+            input_dim = data_dimensions['rhythm_vocab_size'] + 1,
+            output_dim = model_configs['rhythm_embedding_size'],
+            name = 'rhythm_embedding'
         )(rhythm)
-        r_temp = tf.keras.layers.Reshape((16,))(rhythm_embedding)
+
+        r_temp = tf.keras.layers.Reshape(
+            (model_configs['rhythm_embedding_size'],)
+        )(rhythm_embedding)
 
         key_embedding = tf.keras.layers.Embedding(
-            input_dim=key_vocab_size + 1,
-            output_dim=16,
-            name='key_embedding'
+            input_dim = data_dimensions['key_vocab_size'] + 1,
+            output_dim = model_configs['key_embedding_size'],
+            name = 'key_embedding'
         )(key)
-        k_temp = tf.keras.layers.Reshape((16,))(key_embedding)
+        k_temp = tf.keras.layers.Reshape(
+            (model_configs['key_embedding_size'],)
+        )(key_embedding)
 
         meter_embedding = tf.keras.layers.Embedding(
-            input_dim=meter_vocab_size + 1,
-            output_dim=16,
-            name='meter_embedding'
+            input_dim = data_dimensions['meter_vocab_size'] + 1,
+            output_dim = model_configs['meter_embedding_size'],
+            name = 'meter_embedding'
         )(meter)
-        m_temp = tf.keras.layers.Reshape((16,))(meter_embedding)
+        m_temp = tf.keras.layers.Reshape((model_configs['meter_embedding_size'],))(meter_embedding)
 
         tune_embedding = tf.keras.layers.Embedding(
-            input_dim=tune_vocab_size + 1,
-            output_dim=32,
-            name='tune_embedding',
-            mask_zero=True
-        )
-        t_temp = tune_embedding(tune)
-        #tune_mask = tune_embedding.compute_mask(tune)
+            input_dim = data_dimensions['tune_vocab_size'] + 1,
+            output_dim = model_configs['tune_embedding_size'],
+            name = 'tune_embedding',
+            mask_zero = True
+        )(tune)
+        tune_tensor = tf.keras.layers.Reshape((-1, 32))(tune_embedding)
         #----------------------------------------        
-        tune_tensor = tf.keras.layers.Reshape((-1, 32))(t_temp)
         key_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(k_temp)
         rhythm_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(r_temp)
         meter_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(m_temp)
@@ -102,25 +102,37 @@ class CharLSTM(tf.keras.Model):
         #----------------------------------------
 
         #----------------------------------------
-        full_input = tf.keras.layers.Concatenate(axis=-1)([context, tune_tensor])
+        full_input = tf.keras.layers.Concatenate(axis=-1)(
+            [context, tune_tensor]
+        )
         #----------------------------------------
-        lstm_output = tf.keras.layers.RNN(
-            [tf.keras.layers.LSTMCell(256)],
-            return_sequences=True,
-            zero_output_for_mask=True,
-        )(full_input, mask=tf.reshape(tf.sequence_mask(tune_length, 512 - 1), (-1, 512-1)))
+        lstm_output_1 = tf.keras.layers.RNN(
+            [
+                tf.keras.layers.LSTMCell(
+                    model_configs['num_lstm_units']
+                )
+            ],
+            return_sequences = True,
+            zero_output_for_mask = True,
+        )(
+            full_input, 
+            mask = tf.reshape(
+                tf.sequence_mask(
+                    tune_length, 
+                    data_dimensions['max_timesteps']
+                ),
+                (-1, data_dimensions['max_timesteps'])
+            )
+        )
+
         #----------------------------------------
-        next_tokens = tf.keras.layers.Dense(tune_vocab_size)(lstm_output)
+        next_tokens = tf.keras.layers.Dense(tune_vocab_size)(lstm_output_1)
         #----------------------------------------
         model = tf.keras.Model(
             inputs=[tune, rhythm, meter, key, tune_length],
             outputs=next_tokens
         )
         #----------------------------------------
-        tb_callback = tf.keras.callbacks.TensorBoard(
-            os.path.join(self.model_path, 'tensorboard')
-        )
-        tb_callback.set_model(model=model)
         return model
 
 

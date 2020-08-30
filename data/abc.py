@@ -178,7 +178,7 @@ class ABCPreProcessor(PreProcessor):
             parsed_dataset
             .filter(self.__abc_filter_fn__)
             .map(self.__abc_map_fn__)
-            .batch(32)
+            .batch(128)
             .repeat()
         )
     # =============================================
