@@ -108,7 +108,7 @@ class CharLSTM(tf.keras.Model):
             [tf.keras.layers.LSTMCell(256)],
             return_sequences=True,
             zero_output_for_mask=True,
-        )(full_input, mask=tf.reshape(tf.sequence_mask(tune_length, 512 - 1),(-1, 512-1)))
+        )(full_input, mask=tf.reshape(tf.sequence_mask(tune_length, 512 - 1), (-1, 512-1)))
         #----------------------------------------
         next_tokens = tf.keras.layers.Dense(tune_vocab_size)(lstm_output)
         #----------------------------------------
@@ -157,7 +157,11 @@ class CharLSTM(tf.keras.Model):
             self.file_writer.flush()
 
     def map_tokens_to_text(self, output_tensor, sparse):
-        return self.tunes_tokenizer.sequences_to_texts(tf.squeeze(output_tensor).numpy())
+        sequences = tf.squeeze(output_tensor).numpy()
+        texts = self.tunes_tokenizer.sequences_to_texts(sequences)
+        for text in texts:
+            print('----------------------------------------------------------')
+            print(text)
 
 
     def save_model_checkpoint(self):
@@ -195,13 +199,13 @@ class CharLSTM(tf.keras.Model):
                 self.update_tensorboard(loss_value, step)
                 if i % print_outputs_frequency is 0:
                     print('-------------------- Input Sequence --------------------')
-                    print(self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True))
+                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
                     print('--------------------------------------------------')
                     print('-------------------- Generated Sequence --------------------')
-                    print(self.map_tokens_to_text(tf.argmax(outputs, axis = -1), False))
+                    self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
                     print('--------------------------------------------------')
                     print('-------------------- Target Sequence --------------------')
-                    print(self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True))
+                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
                     print('--------------------------------------------------')
                 if i % save_frequency is 0:
                     self.save_model_checkpoint()
