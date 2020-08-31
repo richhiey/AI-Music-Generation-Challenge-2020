@@ -22,11 +22,13 @@ class CharLSTM(tf.keras.Model):
         )
         self.file_writer.set_as_default()
 
-        model_config_path = os.path.join(model_path, 'char_lstm.json', 'r')
-        if os.path.exists(model_configs)
+        model_config_path = os.path.join(model_path, 'char_lstm.json')
+        print(model_config_path)
+        if os.path.exists(model_config_path):
             with open(model_config_path, 'r') as fp:
-                model_configs = json.load(fp)    
-        self.model = self.__create_model__(model_configs, data_dimensions)
+                self.model_configs = json.load(fp)
+                print(self.model_configs)  
+        self.model = self.__create_model__(self.model_configs, data_dimensions)
 
         
         tokenizer_path = os.path.join(self.model_path, 'tunes_vocab.json')
@@ -58,43 +60,42 @@ class CharLSTM(tf.keras.Model):
         key = tf.keras.Input(shape = (1,))
         tune_length = tf.keras.Input(shape = (1,))
         #----------------------------------------
+        rhythm_embedding_size = int(model_configs['rhythm_embedding_size'])
         rhythm_embedding = tf.keras.layers.Embedding(
             input_dim = data_dimensions['rhythm_vocab_size'] + 1,
-            output_dim = model_configs['rhythm_embedding_size'],
+            output_dim = rhythm_embedding_size,
             name = 'rhythm_embedding'
         )(rhythm)
+        r_temp = tf.keras.layers.Reshape((rhythm_embedding_size,))(rhythm_embedding)
 
-        r_temp = tf.keras.layers.Reshape(
-            (model_configs['rhythm_embedding_size'],)
-        )(rhythm_embedding)
-
+        key_embedding_size = int(model_configs['key_embedding_size'])
         key_embedding = tf.keras.layers.Embedding(
             input_dim = data_dimensions['key_vocab_size'] + 1,
-            output_dim = model_configs['key_embedding_size'],
+            output_dim = key_embedding_size,
             name = 'key_embedding'
         )(key)
-        k_temp = tf.keras.layers.Reshape(
-            (model_configs['key_embedding_size'],)
-        )(key_embedding)
+        k_temp = tf.keras.layers.Reshape((key_embedding_size,))(key_embedding)
 
+        meter_embedding_size = int(model_configs['meter_embedding_size'])
         meter_embedding = tf.keras.layers.Embedding(
             input_dim = data_dimensions['meter_vocab_size'] + 1,
-            output_dim = model_configs['meter_embedding_size'],
+            output_dim = meter_embedding_size,
             name = 'meter_embedding'
         )(meter)
-        m_temp = tf.keras.layers.Reshape((model_configs['meter_embedding_size'],))(meter_embedding)
+        m_temp = tf.keras.layers.Reshape((meter_embedding_size,))(meter_embedding)
 
+        tune_embedding_size = int(model_configs['tune_embedding_size'])
         tune_embedding = tf.keras.layers.Embedding(
             input_dim = data_dimensions['tune_vocab_size'] + 1,
-            output_dim = model_configs['tune_embedding_size'],
+            output_dim = tune_embedding_size,
             name = 'tune_embedding',
             mask_zero = True
         )(tune)
-        tune_tensor = tf.keras.layers.Reshape((-1, 32))(tune_embedding)
+        tune_tensor = tf.keras.layers.Reshape((-1, tune_embedding_size))(tune_embedding)
         #----------------------------------------        
-        key_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(k_temp)
-        rhythm_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(r_temp)
-        meter_tensor = tf.keras.layers.RepeatVector(t_temp.shape[1])(m_temp)
+        key_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(k_temp)
+        rhythm_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(r_temp)
+        meter_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(m_temp)
         
         context = tf.keras.layers.Concatenate(axis=-1)(
             [rhythm_tensor, meter_tensor, key_tensor]
@@ -106,27 +107,38 @@ class CharLSTM(tf.keras.Model):
             [context, tune_tensor]
         )
         #----------------------------------------
-        lstm_output_1 = tf.keras.layers.RNN(
-            [
-                tf.keras.layers.LSTMCell(
-                    model_configs['num_lstm_units']
-                )
-            ],
-            return_sequences = True,
-            zero_output_for_mask = True,
-        )(
-            full_input, 
-            mask = tf.reshape(
-                tf.sequence_mask(
-                    tune_length, 
-                    data_dimensions['max_timesteps']
-                ),
-                (-1, data_dimensions['max_timesteps'])
-            )
+        mask = tf.reshape(
+            tf.sequence_mask(tune_length, data_dimensions['max_timesteps']),
+            (-1, data_dimensions['max_timesteps'])
         )
 
+        if model_configs['bidirectional'] == 'True':            
+            stacked_fwd_cells = tf.keras.layers.StackedRNNCells(
+                self.create_RNN_cells(model_configs['rnn'])
+            )
+            stacked_bwd_cells = tf.keras.layers.StackedRNNCells(
+                self.create_RNN_cells(model_configs['rnn'])
+            )
+
+            forward_RNN = self.create_RNN_layer(stacked_fwd_cells)
+            backward_RNN = self.create_RNN_layer(stacked_bwd_cells, True)
+            bidirectional_RNN = tf.keras.layers.Bidirectional(
+                forward_RNN,
+                backward_layer = backward_RNN,
+                merge_mode = 'concat'
+            )
+
+            rnn_output = bidirectional_RNN(full_input, mask  = mask)
+        else:
+            stacked_cells = tf.keras.layers.StackedRNNCells(
+                self.create_RNN_cells(model_configs['rnn'])
+            )
+
+            sequential_RNN = self.create_RNN_layer(stacked_cells)
+
+            rnn_output = sequential_RNN(full_input, mask  = mask)
         #----------------------------------------
-        next_tokens = tf.keras.layers.Dense(tune_vocab_size)(lstm_output_1)
+        next_tokens = tf.keras.layers.Dense(data_dimensions['tune_vocab_size'])(rnn_output)
         #----------------------------------------
         model = tf.keras.Model(
             inputs=[tune, rhythm, meter, key, tune_length],
@@ -135,6 +147,21 @@ class CharLSTM(tf.keras.Model):
         #----------------------------------------
         return model
 
+
+    def create_RNN_cells(self, configs):
+        if configs['unit_type'] == 'lstm':
+            RNN_unit = tf.keras.layers.LSTMCell
+        else:
+            RNN_unit = tf.keras.layers.GRUCell
+        return [RNN_unit(int(configs['num_units'])) for _ in range(int(configs['num_layers']))]
+
+    def create_RNN_layer(self, cells, go_backwards = False):
+        return tf.keras.layers.RNN(
+            cells,
+            return_sequences = True,
+            zero_output_for_mask = True,
+            go_backwards = go_backwards,
+        )
 
     def __call_model__(self, context, input_sequence, training=False):
         return self.model([
