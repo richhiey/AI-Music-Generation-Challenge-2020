@@ -17,7 +17,6 @@ colorama==0.4.3
 crcmod==1.7
 crepe==0.0.11
 cycler==0.10.0
-dataclasses==0.7
 DateTime==4.3
 ddsp==0.10.0
 decorator==4.4.2
