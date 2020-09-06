@@ -1,0 +1,12 @@
+{
+	"tune_embedding_size": "16",
+	"rhythm_embedding_size": "16",
+	"key_embedding_size": "16",
+	"meter_embedding_size": "16",
+	"bidirectional": "True",
+	"rnn": {
+		"num_layers": "1",
+		"num_units": "128",
+		"unit_type": "lstm"
+	}
+}
