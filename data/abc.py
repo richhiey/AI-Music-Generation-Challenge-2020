@@ -11,7 +11,8 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from .constants import  METADATA_KEYS, CONDITIONAL_KEYS, \
-                        MAX_TIMESTEPS_FOR_ABC_MODEL
+                        MAX_TIMESTEPS_FOR_ABC_MODEL, \
+                        BASE_ABC_VOCABULARY
 ####################################################################
 
 ## -------------------------------------------------------------------
@@ -51,6 +52,7 @@ class ABCPreProcessor(PreProcessor):
                             tune.strip().split('\n')
                         )
                         if (valid_data(processed_tune)):
+                            print(processed_tune)
                             self.num_files = self.num_files + 1
                             print('------------------- Extracted Tune ' + str(self.num_files) + ' --------------------')
                             print(processed_tune)
@@ -77,10 +79,7 @@ class ABCPreProcessor(PreProcessor):
             with open(self.json_path) as json_file:
                 data = json.load(json_file)
 
-            tokenizer = create_tunes_tokenizer(
-                get_key_data('tune', data), 
-                self.output_dir
-            )
+            tokenizer = create_tunes_tokenizer(data, self.output_dir)
             key_vocab = create_vocabulary(
                 get_key_data('K', data),
                 os.path.join(self.output_dir, 'K_vocab.json')
@@ -99,10 +98,8 @@ class ABCPreProcessor(PreProcessor):
             for i, abc_track in enumerate(data):
                 print('------------- Serializing example ' + str(i) + ' -------------')
                 print(abc_track)
-                if (len(abc_track['tune']) <= 512):
-                    tokenized_tune = tokenizer.texts_to_sequences(abc_track['tune'])
-                    # Flatten
-                    tokenized_tune = [item for sublist in tokenized_tune for item in sublist]
+                tokenized_tune = tokenizer.tokenize(abc_track['tune'])
+                if (len(tokenized_tune) <= MAX_TIMESTEPS_FOR_ABC_MODEL + 1):
                     sequence_example = serialize_example(
                         tf.pad(
                             tf.convert_to_tensor(
@@ -178,7 +175,7 @@ class ABCPreProcessor(PreProcessor):
             parsed_dataset
             .filter(self.__abc_filter_fn__)
             .map(self.__abc_map_fn__)
-            .batch(128)
+            .batch(16)
             .repeat()
         )
     # =============================================
@@ -269,6 +266,54 @@ class ABCPreProcessor(PreProcessor):
 #########################################################################
 # HELPER FUNCTIONS
 #########################################################################
+class ABCTokenizer():
+    def __init__(self, vocab_path, tunes = []):
+        if os.path.exists(vocab_path):
+            with open(vocab_path, 'r') as fp:
+                self.vocab = json.loads(fp.read())
+        else:
+            #print(tunes)
+            uniq_keys = list(set(get_key_data(tunes, 'K')))
+            uniq_meters = list(set(get_key_data(tunes, 'M')))
+            final_vocab = BASE_ABC_VOCABULARY + uniq_meters + uniq_keys
+            idx = list(range(1, len(final_vocab) + 1))
+            word_to_idx = dict(zip(final_vocab, idx))
+            idx_to_word = dict(zip(idx, final_vocab))
+            self.vocab = {
+                'word_to_idx': word_to_idx,
+                'idx_to_word': idx_to_word
+            }
+            write_json(self.vocab, vocab_path)
+
+    def return_vocabulary(self):
+        return self.vocab
+
+    def tokenize(self, abc_str):
+        i = 0
+        tokens = []
+        abc_tokens = []
+        abc_str_len = len(abc_str)
+        chord = False
+        while(i < abc_str_len):
+            current_token = ''
+            if (abc_str[i] == "\""):
+                chord = not chord
+            if not chord:
+                for musical_token in list(self.vocab['word_to_idx'].keys()):
+                    len_token = len(musical_token)
+                    if (abc_str[i:i+len_token] == musical_token and len_token > len(current_token)):
+                        current_token = musical_token
+                if (current_token):
+                    tokens.append(self.vocab['word_to_idx'][current_token])
+                    abc_tokens.append(current_token)
+                    i = i + len(current_token)
+                else:
+                    i = i + 1
+            else:
+                i = i + 1
+        print(abc_tokens)
+        return tokens
+
 
 def plot_with_matplotlib(freq, title, xaxis, yaxis):
     plt.plot(freq)
@@ -287,14 +332,8 @@ def categorical_hist_with_matplotlib(category_dict, title):
     plt.show()
 
 def create_tunes_tokenizer(tunes, output_dir):
-    tokenizer = tf.keras.preprocessing.text.Tokenizer(
-        filters=' ',
-        lower=False,
-        char_level=True
-    )
-    tokenizer.fit_on_texts(tunes)
     vocab_fp = os.path.join(output_dir, 'tunes_vocab.json')
-    write_json(tokenizer.to_json(), vocab_fp)
+    tokenizer = ABCTokenizer(vocab_fp, tunes)
     return tokenizer
 
 def create_vocabulary(labels, vocab_fp):
@@ -377,7 +416,7 @@ def extract_notes_from_tune(tune, keys_to_remove):
 
 def separate_all_abc_tunes(abc_filepath):
     abc_tunes = open(abc_filepath, 'r').read()
-    abc_tunes = list(filter(None, abc_tunes.split('\n\n')))
+    abc_tunes = list(filter(None, abc_tunes.split("<|endoftext|>")))
     return abc_tunes
 
 # function to add to JSON 
@@ -391,13 +430,13 @@ def read_json(filename):
     return json_data
 
 def valid_data(x):
-    return (x.get('tune') and x.get('K') and x.get('M') and x.get('R'))
+    return (x.get('tune') and x.get('K') and x.get('M'))
 
 def get_key_data(key, data):
     temp = []
     for x in data:
         if (valid_data(x)):
-            temp.append(x[key])
+            temp.append(key + ':' + x[key])
     return temp
 
 def __visualize_dataset_stats__(data):

@@ -4,11 +4,8 @@ from .helpers import TransformerEncoder, TransformerDecoder
 
 class ABCTransformer(tf.keras.Model):
 
-    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size, 
-               target_vocab_size, pe_input, pe_target, rate=0.1):
+    def __init__(self, num_layers, d_model, num_heads, dff, vocab_size, pe_target, rate=0.1):
         super(Transformer, self).__init__()
-        self.encoder = TransformerEncoder(num_layers, d_model, num_heads, dff, 
-                           input_vocab_size, pe_input, rate)
         self.decoder = TransformerDecoder(num_layers, d_model, num_heads, dff, 
                            target_vocab_size, pe_target, rate)
         self.final_layer = tf.keras.layers.Dense(target_vocab_size)
