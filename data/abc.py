@@ -79,7 +79,9 @@ class ABCPreProcessor(PreProcessor):
             with open(self.json_path) as json_file:
                 data = json.load(json_file)
 
+            print('Created required vocabularies for tokenizing the ABC tunes ...')
             tokenizer = create_tunes_tokenizer(data, self.output_dir)
+            print(tokenizer.vocab)
             key_vocab = create_vocabulary(
                 get_key_data('K', data),
                 os.path.join(self.output_dir, 'K_vocab.json')
@@ -93,7 +95,6 @@ class ABCPreProcessor(PreProcessor):
                 os.path.join(self.output_dir, 'R_vocab.json')
             )
 
-            print('Created required vocabularies for tokenizing the ABC tunes ...')
             writer = tf.io.TFRecordWriter(self.tfrecord_path)
             print('Creating TFRecord File ...')
             for i, abc_track in enumerate(data):
@@ -187,7 +188,7 @@ class ABCPreProcessor(PreProcessor):
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
             .shuffle(256)
-            .batch(16)
+            .batch(2)
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
@@ -279,15 +280,15 @@ class ABCTokenizer():
             with open(vocab_path, 'r') as fp:
                 self.vocab = json.loads(fp.read())
         else:
-            print(tunes)
             uniq_keys = list(set(get_key_data('K', tunes)))
             uniq_keys = ['K:' + key for key in uniq_keys]
             uniq_meters = list(set(get_key_data('M', tunes)))
             uniq_meters = ['M:' + meter for meter in uniq_meters]
             final_vocab = BASE_ABC_VOCABULARY + uniq_meters + uniq_keys
-            idx = map(str, list(range(1, len(final_vocab) + 1)))
-            word_to_idx = dict(zip(final_vocab, idx))
-            idx_to_word = dict(zip(idx, final_vocab))
+            idx = list(range(1, len(final_vocab)))
+            print(idx)
+            word_to_idx = dict(zip(final_vocab, map(str, idx)))
+            idx_to_word = dict(zip(map(str, idx), final_vocab))
             self.vocab = {
                 'word_to_idx': word_to_idx,
                 'idx_to_word': idx_to_word

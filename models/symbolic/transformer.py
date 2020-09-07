@@ -13,7 +13,8 @@ if os.path.exists(vocab_path):
         full_vocab = json.loads(fp.read())
 vocab = full_vocab['word_to_idx']
 vocab = {v: k for k, v in vocab.items()}
-
+#Initialize dict
+print(vocab['1'])
 class FolkTransformer(tf.keras.Model):
 
     def __init__(self, model_path, data_dimensions):
@@ -91,10 +92,10 @@ class FolkTransformer(tf.keras.Model):
         print("Saved checkpoint for step {}: {}".format(int(self.ckpt.step), save_path))
 
     def create_padding_mask(self, tune_lengths, max_seq_len):
-        return tf.sequence_mask(
+        return 1 - tf.sequence_mask(
             tune_lengths, 
             maxlen=max_seq_len, 
-            dtype=tf.dtypes.int64, 
+            dtype=tf.dtypes.float32, 
             name='Padding Mask for Input Sequence'
         )
 
@@ -158,7 +159,6 @@ class FolkTransformer(tf.keras.Model):
                 step = step + 1
 
             self.save_model_checkpoint()
-            tf.saved_model.save(self.model, os.path.join(self.model_dir, 'saved_model'))
             # End epoch
             train_loss_results.append(epoch_loss_avg.result())
             train_accuracy_results.append(epoch_accuracy.result())
