@@ -197,8 +197,7 @@ class DecoderLayer(tf.keras.layers.Layer):
         self.dropout2 = tf.keras.layers.Dropout(rate)
         self.dropout3 = tf.keras.layers.Dropout(rate)
 
-    def call(self, x, enc_output, training, 
-           look_ahead_mask, padding_mask):
+    def call(self, x, training, look_ahead_mask, padding_mask):
         # enc_output.shape == (batch_size, input_seq_len, d_model)
 
         attn1, attn_weights_block1 = self.mha1(x, x, x, look_ahead_mask)  # (batch_size, target_seq_len, d_model)
@@ -291,8 +290,7 @@ class TransformerDecoder(tf.keras.layers.Layer):
         ]
         self.dropout = tf.keras.layers.Dropout(rate)
 
-    def call(self, x, enc_output, training, 
-           look_ahead_mask, padding_mask):
+    def call(self, x, look_ahead_mask, padding_mask, training=True):
 
         seq_len = tf.shape(x)[1]
         attention_weights = {}
@@ -305,8 +303,7 @@ class TransformerDecoder(tf.keras.layers.Layer):
 
         for i in range(self.num_layers):
             x, block1, block2 = self.dec_layers[i](
-                x, enc_output, training,
-                look_ahead_mask, padding_mask
+                x, training, look_ahead_mask, padding_mask
             )
       
         attention_weights['decoder_layer{}_block1'.format(i+1)] = block1

@@ -6,6 +6,8 @@ import tensorflow as tf
 from datetime import datetime
 from .helpers import TransformerEncoder, TransformerDecoder
 
+MAX_SEQUENCE_LENGTH = 512
+
 class FolkTransformer(tf.keras.Model):
 
     def __init__(self, model_path, data_dimensions):
@@ -52,18 +54,20 @@ class FolkTransformer(tf.keras.Model):
     def get_configs(self):
         return self.model_configs
 
-    def __call_model__(self, sequence, target, mask, training=True):
-        return self.model(sequence, target, mask)
-
+    def __call_model__(self, sequence, look_ahead_mask, padding_mask, training=True):
+        return self.model(
+            tf.sparse.to_dense(sequence),
+            look_ahead_mask,
+            padding_mask
+        )
 
     def call(self, context, sequence, training=True):
         return self.__call_model__(context, sequence, training)
 
 
-    def grad(self, sequence, target, mask):
+    def grad(self, sequence, targets, look_ahead_mask, padding_mask):
         with tf.GradientTape() as tape:
-            outputs = self.__call_model__(context, inputs, mask)
-            targets = tf.reshape(tf.sparse.to_dense(targets),(-1, 512 - 1))
+            outputs = self.__call_model__(sequence, look_ahead_mask, padding_mask)
             loss_value = self.loss_fn(
                 y_pred = outputs,
                 y_true = targets,
@@ -91,8 +95,21 @@ class FolkTransformer(tf.keras.Model):
         save_path = self.ckpt_manager.save()
         print("Saved checkpoint for step {}: {}".format(int(self.ckpt.step), save_path))
 
-    def calculate_mask(self, sequence, target):
-        
+    def create_padding_mask(self, tune_lengths, max_seq_len):
+        return tf.sequence_mask(
+            tune_lengths, 
+            maxlen=max_seq_len, 
+            dtype=tf.dtypes.bool, 
+            name='Padding Mask for Input Sequence'
+        )
+
+        # add extra dimensions to add the padding
+        # to the attention logits.
+        return seq[:, tf.newaxis, tf.newaxis, :]  # (batch_size, 1, 1, seq_len)
+
+    def create_look_ahead_mask(self, size):
+        mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
+        return mask
 
     def train(self, dataset):
         train_loss_results = []
@@ -112,21 +129,25 @@ class FolkTransformer(tf.keras.Model):
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
             # Training loop - using batches of 32
-            for i, (sequence, target) in enumerate(dataset):
+            for i, (context, sequence) in enumerate(dataset):
                 # Optimize the model
-                mask = self.calculate_mask(sequence, target)
-                loss_value, outputs = self.grad(sequence, target, mask)
+                loss_value, outputs = self.grad(
+                    sequence['input'],
+                    sequence['output'],
+                    self.create_look_ahead_mask(MAX_SEQUENCE_LENGTH),
+                    self.create_padding_mask(context['tune_length'], MAX_SEQUENCE_LENGTH)
+                )
                 self.ckpt.step.assign_add(1)
                 self.update_tensorboard(loss_value, step)
                 if i % print_outputs_frequency is 0:
                     print('-------------------- Input Sequence --------------------')
-                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
+                    self.map_tokens_to_text(sequence['input'], True)
                     print('--------------------------------------------------')
                     print('-------------------- Generated Sequence --------------------')
                     self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
                     print('--------------------------------------------------')
                     print('-------------------- Target Sequence --------------------')
-                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
+                    self.map_tokens_to_text(sequence['output'], True)
                     print('--------------------------------------------------')
                 if i % save_frequency is 0:
                     self.save_model_checkpoint()
@@ -178,10 +199,12 @@ class Transformer(tf.keras.Model):
         )
 
 
-    def call(self, sequence, target, look_ahead_mask, training=True):
+    def call(self, sequence, look_ahead_mask, padding_mask):
 
         dec_output, attention_weights = self.decoder(
-            sequence, tar, look_ahead_mask, training
+            sequence,
+            look_ahead_mask, 
+            padding_mask
         )
         # (batch_size, tar_seq_len, target_vocab_size)
         final_output = self.final_layer(dec_output)
