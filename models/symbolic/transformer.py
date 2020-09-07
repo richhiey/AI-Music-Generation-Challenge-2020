@@ -6,7 +6,13 @@ import tensorflow as tf
 from datetime import datetime
 from .helpers import TransformerEncoder, TransformerDecoder
 
-MAX_SEQUENCE_LENGTH = 512
+MAX_SEQUENCE_LENGTH = 511
+vocab_path = '/home/richhiey/Desktop/workspace/projects/AI_Music_Challenge_2020/tfrecords/abc/tunes_vocab.json'
+if os.path.exists(vocab_path):
+    with open(vocab_path, 'r') as fp:
+        full_vocab = json.loads(fp.read())
+vocab = full_vocab['word_to_idx']
+vocab = {v: k for k, v in vocab.items()}
 
 class FolkTransformer(tf.keras.Model):
 
@@ -33,10 +39,6 @@ class FolkTransformer(tf.keras.Model):
                 self.model_configs = json.loads(fp.read())
                 print(self.model_configs)
 
-        tokenizer_path = os.path.join(self.model_path, 'tunes_vocab.json')
-        if os.path.exists(tokenizer_path):
-            self.tunes_tokenizer = ABCTokenizer(tokenizer_path)
-
         self.model = Transformer(self.model_configs, self.data_dimensions)
         self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
@@ -56,7 +58,7 @@ class FolkTransformer(tf.keras.Model):
 
     def __call_model__(self, sequence, look_ahead_mask, padding_mask, training=True):
         return self.model(
-            tf.sparse.to_dense(sequence),
+            sequence,
             look_ahead_mask,
             padding_mask
         )
@@ -67,7 +69,7 @@ class FolkTransformer(tf.keras.Model):
 
     def grad(self, sequence, targets, look_ahead_mask, padding_mask):
         with tf.GradientTape() as tape:
-            outputs = self.__call_model__(sequence, look_ahead_mask, padding_mask)
+            outputs, _ = self.__call_model__(sequence, look_ahead_mask, padding_mask)
             loss_value = self.loss_fn(
                 y_pred = outputs,
                 y_true = targets,
@@ -83,13 +85,6 @@ class FolkTransformer(tf.keras.Model):
             tf.summary.scalar("Categorical Cross-Entropy", loss, step=step)
             self.file_writer.flush()
 
-    def map_tokens_to_text(self, output_tensor, sparse):
-        sequences = tf.squeeze(output_tensor).numpy()
-        texts = self.tunes_tokenizer.sequences_to_texts(sequences)
-        for text in texts:
-            print('----------------------------------------------------------')
-            print(text)
-
 
     def save_model_checkpoint(self):
         save_path = self.ckpt_manager.save()
@@ -99,7 +94,7 @@ class FolkTransformer(tf.keras.Model):
         return tf.sequence_mask(
             tune_lengths, 
             maxlen=max_seq_len, 
-            dtype=tf.dtypes.bool, 
+            dtype=tf.dtypes.int64, 
             name='Padding Mask for Input Sequence'
         )
 
@@ -110,6 +105,11 @@ class FolkTransformer(tf.keras.Model):
     def create_look_ahead_mask(self, size):
         mask = 1 - tf.linalg.band_part(tf.ones((size, size)), -1, 0)
         return mask
+
+    def map_to_abc_notation(self, output):
+        output = tf.squeeze(tf.argmax(tf.nn.softmax(output), axis = -1)).numpy()
+        abc_tokens = [vocab[str(token + 1)] for token in output]
+        return ''.join(abc_tokens)
 
     def train(self, dataset):
         train_loss_results = []
@@ -131,24 +131,22 @@ class FolkTransformer(tf.keras.Model):
             # Training loop - using batches of 32
             for i, (context, sequence) in enumerate(dataset):
                 # Optimize the model
+                input_sequence = tf.sparse.to_dense(sequence['input'])
+                target_sequence = tf.sparse.to_dense(sequence['output'])
                 loss_value, outputs = self.grad(
-                    sequence['input'],
-                    sequence['output'],
+                    input_sequence,
+                    target_sequence,
                     self.create_look_ahead_mask(MAX_SEQUENCE_LENGTH),
                     self.create_padding_mask(context['tune_length'], MAX_SEQUENCE_LENGTH)
                 )
+                abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
+                if i % print_outputs_frequency == 0:
+                    print('---------- Generated Output -----------')
+                    print(''.join(abc_outputs))
+                    print('.......................................')
+
                 self.ckpt.step.assign_add(1)
                 self.update_tensorboard(loss_value, step)
-                if i % print_outputs_frequency is 0:
-                    print('-------------------- Input Sequence --------------------')
-                    self.map_tokens_to_text(sequence['input'], True)
-                    print('--------------------------------------------------')
-                    print('-------------------- Generated Sequence --------------------')
-                    self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
-                    print('--------------------------------------------------')
-                    print('-------------------- Target Sequence --------------------')
-                    self.map_tokens_to_text(sequence['output'], True)
-                    print('--------------------------------------------------')
                 if i % save_frequency is 0:
                     self.save_model_checkpoint()
                 # Track progress
@@ -156,7 +154,7 @@ class FolkTransformer(tf.keras.Model):
                 # Compare predicted label to actual label
                 # training=True is needed only if there are layers with different
                 # behavior during training versus inference (e.g. Dropout).
-                #epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
+                # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
                 step = step + 1
 
             self.save_model_checkpoint()

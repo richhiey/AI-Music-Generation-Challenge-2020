@@ -102,21 +102,31 @@ class ABCPreProcessor(PreProcessor):
                 tokenized_tune = tokenizer.tokenize_tune(
                     '<s>M:' + abc_track['M'] + 'K:' + abc_track['K'] + abc_track['tune'] + '</s>'
                 )
-                sequence_example = serialize_example(
-                    tf.convert_to_tensor(
-                        tokenized_tune[:len(tokenized_tune)-1],
-                        dtype=tf.int64
-                    ),
-                    tf.convert_to_tensor(
-                        tokenized_tune[1:],
-                        dtype=tf.int64
-                    ),
-                    tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
-                    tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
-                    tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
-                    tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
-                )
-                writer.write(sequence_example)
+                len_tokenized_tune = len(tokenized_tune)
+                if (len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL):
+                    sequence_example = serialize_example(
+                        tf.pad(
+                            tf.convert_to_tensor(
+                                tokenized_tune[:-1],
+                                dtype=tf.int64
+                            ),
+                            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
+                            mode='CONSTANT'
+                        ),
+                        tf.pad(
+                            tf.convert_to_tensor(
+                                tokenized_tune[1:],
+                                dtype=tf.int64
+                            ),
+                            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
+                            mode='CONSTANT'
+                        ),
+                        tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
+                        tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
+                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
+                        tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
+                    )
+                    writer.write(sequence_example)
             writer.close()
             print('Done saving to TFRecord Dataset!')
         else:
@@ -159,6 +169,11 @@ class ABCPreProcessor(PreProcessor):
         return parsed_dataset
     # =============================================
 
+    def filter_max_length(self, _, sequence, max_length = 512):
+        return tf.logical_and(
+            tf.size(sequence['input']) <= max_length,
+            tf.size(sequence['output']) <= max_length
+        )
 
     # =============================================
     # Run transformations on the dataset to prepare
@@ -167,10 +182,13 @@ class ABCPreProcessor(PreProcessor):
     def prepare_dataset(self, parsed_dataset, configs = None):
         return (
             parsed_dataset
-            .filter(self.__abc_filter_fn__)
-            .map(self.__abc_map_fn__)
+            .filter(self.filter_max_length)
+            .map(self.__pad_to_max_length__)
+            # cache the dataset to memory to get a speedup while reading from it.
+            .cache()
+            .shuffle(256)
             .batch(16)
-            .repeat()
+            .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
 
@@ -227,7 +245,7 @@ class ABCPreProcessor(PreProcessor):
     # Run transformations on elements in the raw
     # dataset 
     # =============================================
-    def __abc_map_fn__(self, context, sequence):
+    def __pad_to_max_length__(self, context, sequence):
         return context, sequence
     # =============================================
 

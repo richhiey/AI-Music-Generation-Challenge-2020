@@ -39,7 +39,7 @@ CONDITIONAL_KEYS = {
     'R':'rhythm',
 }
 
-MAX_TIMESTEPS_FOR_ABC_MODEL = 511
+MAX_TIMESTEPS_FOR_ABC_MODEL = 512
 
 ## Base vocabulary for models
 ## Inspired from the vocabulary of Folk-RNN models by Sturm et al. 
