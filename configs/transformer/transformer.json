@@ -1,9 +1,9 @@
 {
-	"num_layers":6, 
-	"d_model":256,
-	"num_heads":8,
-	"dff": 23,
-	"vocab_size":180,
-	"pe_target": 24,
-	"rate": 0.1,
+	"num_layers": "6", 
+	"d_model": "256",
+	"num_heads": "8",
+	"dff": "23",
+	"target_vocab_size": "180",
+	"pe_target": "24",
+	"rate": "0.1"
 }

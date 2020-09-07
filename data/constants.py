@@ -36,6 +36,7 @@ METADATA_KEYS = {
 CONDITIONAL_KEYS = {
     'K':'key',
     'M':'meter',
+    'R':'rhythm',
 }
 
 MAX_TIMESTEPS_FOR_ABC_MODEL = 511

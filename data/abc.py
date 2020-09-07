@@ -92,37 +92,31 @@ class ABCPreProcessor(PreProcessor):
                 get_key_data('R', data),
                 os.path.join(self.output_dir, 'R_vocab.json')
             )
+
             print('Created required vocabularies for tokenizing the ABC tunes ...')
             writer = tf.io.TFRecordWriter(self.tfrecord_path)
             print('Creating TFRecord File ...')
             for i, abc_track in enumerate(data):
-                print('------------- Serializing example ' + str(i) + ' -------------')
+                print('------------ Serializing example ' + str(i) + ' -------------')
                 print(abc_track)
-                tokenized_tune = tokenizer.tokenize(abc_track['tune'])
-                if (len(tokenized_tune) <= MAX_TIMESTEPS_FOR_ABC_MODEL + 1):
-                    sequence_example = serialize_example(
-                        tf.pad(
-                            tf.convert_to_tensor(
-                                tokenized_tune[:len(tokenized_tune)-1],
-                                dtype=tf.int64
-                            ),
-                            [[0, 512 - len(tokenized_tune)]],
-                            mode='CONSTANT'
-                        ),
-                        tf.pad(
-                            tf.convert_to_tensor(
-                                tokenized_tune[1:],
-                                dtype=tf.int64
-                            ),
-                            [[0, 512 - len(tokenized_tune)]],
-                            mode='CONSTANT'
-                        ),
-                        tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
-                        tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
-                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
-                        tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
-                    )
-                    writer.write(sequence_example)
+                tokenized_tune = tokenizer.tokenize_tune(
+                    '<s>M:' + abc_track['M'] + 'K:' + abc_track['K'] + abc_track['tune'] + '</s>'
+                )
+                sequence_example = serialize_example(
+                    tf.convert_to_tensor(
+                        tokenized_tune[:len(tokenized_tune)-1],
+                        dtype=tf.int64
+                    ),
+                    tf.convert_to_tensor(
+                        tokenized_tune[1:],
+                        dtype=tf.int64
+                    ),
+                    tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
+                    tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
+                    tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
+                    tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
+                )
+                writer.write(sequence_example)
             writer.close()
             print('Done saving to TFRecord Dataset!')
         else:
@@ -187,12 +181,7 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
     def get_data_dimensions(self):
         with open(os.path.join(self.output_dir, 'tunes_vocab.json'), 'r') as fp:
-            ## Extra steps to convert dict string into dict
-            len_tunes_vocab = len(
-                json.loads(
-                    json.loads(json.load(fp))['config']['word_index']
-                )
-            )
+            len_tunes_vocab = len(json.loads(fp.read())['word_to_idx'])
         with open(os.path.join(self.output_dir, 'R_vocab.json'), 'r') as fp:
             len_rhythm_vocab = len(json.loads(fp.read()))
         with open(os.path.join(self.output_dir, 'M_vocab.json'), 'r') as fp:
@@ -272,11 +261,13 @@ class ABCTokenizer():
             with open(vocab_path, 'r') as fp:
                 self.vocab = json.loads(fp.read())
         else:
-            #print(tunes)
-            uniq_keys = list(set(get_key_data(tunes, 'K')))
-            uniq_meters = list(set(get_key_data(tunes, 'M')))
+            print(tunes)
+            uniq_keys = list(set(get_key_data('K', tunes)))
+            uniq_keys = ['K:' + key for key in uniq_keys]
+            uniq_meters = list(set(get_key_data('M', tunes)))
+            uniq_meters = ['M:' + meter for meter in uniq_meters]
             final_vocab = BASE_ABC_VOCABULARY + uniq_meters + uniq_keys
-            idx = list(range(1, len(final_vocab) + 1))
+            idx = map(str, list(range(1, len(final_vocab) + 1)))
             word_to_idx = dict(zip(final_vocab, idx))
             idx_to_word = dict(zip(idx, final_vocab))
             self.vocab = {
@@ -288,7 +279,7 @@ class ABCTokenizer():
     def return_vocabulary(self):
         return self.vocab
 
-    def tokenize(self, abc_str):
+    def tokenize_tune(self, abc_str):
         i = 0
         tokens = []
         abc_tokens = []
@@ -304,7 +295,7 @@ class ABCTokenizer():
                     if (abc_str[i:i+len_token] == musical_token and len_token > len(current_token)):
                         current_token = musical_token
                 if (current_token):
-                    tokens.append(self.vocab['word_to_idx'][current_token])
+                    tokens.append(int(self.vocab['word_to_idx'][current_token]))
                     abc_tokens.append(current_token)
                     i = i + len(current_token)
                 else:
@@ -430,13 +421,14 @@ def read_json(filename):
     return json_data
 
 def valid_data(x):
+    print(x)
     return (x.get('tune') and x.get('K') and x.get('M'))
 
 def get_key_data(key, data):
     temp = []
     for x in data:
         if (valid_data(x)):
-            temp.append(key + ':' + x[key])
+            temp.append(x[key])
     return temp
 
 def __visualize_dataset_stats__(data):
