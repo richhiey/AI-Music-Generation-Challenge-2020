@@ -3,14 +3,26 @@ import json
 from datetime import datetime
 import tensorflow as tf
 
+def load_musical_vocab(vocab_path):
+    if os.path.exists(vocab_path):
+        with open(vocab_path, 'r') as fp:
+            full_vocab = json.loads(fp.read())
+        vocab = full_vocab['idx_to_word']
+        return vocab
+    else:
+        return {}
 
-class CharLSTM(tf.keras.Model):
+vocab = load_musical_vocab('/home/richhiey/Desktop/workspace/projects/AI_Music_Challenge_2020/tfrecords/abc/tunes_vocab.json')
+print(vocab['1'])
 
-    def __init__(self, model_path, data_dimensions):
-        super(CharLSTM, self).__init__()
+class FolkLSTM(tf.keras.Model):
+
+    def __init__(self, model_path, data_dimensions, vocab_path = None):
+        super(FolkLSTM, self).__init__()
         
         self.data_dimensions = data_dimensions
         self.model_path = model_path
+        self.vocab = load_musical_vocab(os.path.join(vocab_path, 'tunes_vocab.json'))
 
         self.tensorboard_logdir = os.path.join(
             model_path,
@@ -22,7 +34,7 @@ class CharLSTM(tf.keras.Model):
         )
         self.file_writer.set_as_default()
 
-        model_config_path = os.path.join(model_path, 'char_lstm.json')
+        model_config_path = os.path.join(model_path, 'lstm.json')
         print(model_config_path)
         if os.path.exists(model_config_path):
             with open(model_config_path, 'r') as fp:
@@ -48,6 +60,10 @@ class CharLSTM(tf.keras.Model):
             os.path.join(self.model_path, 'ckpt'),
             max_to_keep = 3
         )
+
+
+    def get_configs(self):
+        return self.model_configs
 
 
     def __create_model__(self, model_configs, data_dimensions):
@@ -165,7 +181,7 @@ class CharLSTM(tf.keras.Model):
 
     def __call_model__(self, context, input_sequence, training=False):
         return self.model([
-            tf.reshape(tf.sparse.to_dense(input_sequence),(-1, 512- 1,)), 
+            tf.squeeze(tf.sparse.to_dense(input_sequence)), 
             context['R'],
             context['M'],
             context['K'],
@@ -179,7 +195,7 @@ class CharLSTM(tf.keras.Model):
     def grad(self, context, inputs, targets):
         with tf.GradientTape() as tape:
             outputs = self.__call_model__(context, inputs)
-            targets = tf.reshape(tf.sparse.to_dense(targets),(-1, 512 - 1))
+            targets = tf.reshape(tf.sparse.to_dense(targets),(-1, self.data_dimensions['max_timesteps']))
             loss_value = self.loss_fn(
                 y_pred = outputs,
                 y_true = targets,
@@ -195,12 +211,13 @@ class CharLSTM(tf.keras.Model):
             tf.summary.scalar("Categorical Cross-Entropy", loss, step=step)
             self.file_writer.flush()
 
-    def map_tokens_to_text(self, output_tensor, sparse):
-        sequences = tf.squeeze(output_tensor).numpy()
-        texts = self.tunes_tokenizer.sequences_to_texts(sequences)
-        for text in texts:
-            print('----------------------------------------------------------')
-            print(text)
+    def map_to_abc_notation(self, output):
+        output = tf.squeeze(tf.argmax(tf.nn.softmax(output), axis = -1)).numpy()
+        abc_tokens = []
+        for token in output:
+            if token:
+                abc_tokens.append(vocab[str(token)])
+        return ''.join(abc_tokens)
 
 
     def save_model_checkpoint(self):
@@ -236,18 +253,26 @@ class CharLSTM(tf.keras.Model):
                 )
                 self.ckpt.step.assign_add(1)
                 self.update_tensorboard(loss_value, step)
-                if i % print_outputs_frequency is 0:
-                    print('-------------------- Input Sequence --------------------')
-                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
-                    print('--------------------------------------------------')
-                    print('-------------------- Generated Sequence --------------------')
-                    self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
-                    print('--------------------------------------------------')
-                    print('-------------------- Target Sequence --------------------')
-                    self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
-                    print('--------------------------------------------------')
+                
+                if i % print_outputs_frequency == 0:
+                    abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
+                    print('---------- Generated Output -----------')
+                    print(''.join(abc_outputs))
+                    print('.......................................')
+
+                    # print('-------------------- Input Sequence --------------------')
+                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
+                    # print('--------------------------------------------------')
+                    # print('-------------------- Generated Sequence --------------------')
+                    # self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
+                    # print('--------------------------------------------------')
+                    # print('-------------------- Target Sequence --------------------')
+                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
+                    # print('--------------------------------------------------')
+                
                 if i % save_frequency is 0:
                     self.save_model_checkpoint()
+                
                 # Track progress
                 epoch_loss_avg.update_state(loss_value)  # Add current batch loss
                 # Compare predicted label to actual label
@@ -257,7 +282,7 @@ class CharLSTM(tf.keras.Model):
                 step = step + 1
 
             self.save_model_checkpoint()
-            tf.saved_model.save(self.model, os.path.join(self.model_dir, 'saved_model'))
+            tf.saved_model.save(self.model, os.path.join(self.model_path, 'saved_model'))
             # End epoch
             train_loss_results.append(epoch_loss_avg.result())
             train_accuracy_results.append(epoch_accuracy.result())

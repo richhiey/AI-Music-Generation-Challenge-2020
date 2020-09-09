@@ -208,7 +208,7 @@ class ABCPreProcessor(PreProcessor):
         with open(os.path.join(self.output_dir, 'K_vocab.json'), 'r') as fp:
             len_key_vocab = len(json.loads(fp.read()))
         return {
-            'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL,
+            'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL - 1,
             'tune_vocab_size': len_tunes_vocab,
             'rhythm_vocab_size': len_rhythm_vocab,
             'meter_vocab_size': len_meter_vocab,
