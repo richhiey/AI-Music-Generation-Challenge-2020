@@ -6,7 +6,7 @@
 	"bidirectional": "False",
 	"rnn": {
 		"num_layers": "1",
-		"num_units": "128",
+		"num_units": "512",
 		"unit_type": "lstm"
 	}
 }

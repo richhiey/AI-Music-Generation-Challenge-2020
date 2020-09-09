@@ -7,13 +7,10 @@ def load_musical_vocab(vocab_path):
     if os.path.exists(vocab_path):
         with open(vocab_path, 'r') as fp:
             full_vocab = json.loads(fp.read())
-        vocab = full_vocab['idx_to_word']
-        return vocab
+        return full_vocab['idx_to_word']
     else:
         return {}
 
-vocab = load_musical_vocab('/home/richhiey/Desktop/workspace/projects/AI_Music_Challenge_2020/tfrecords/abc/tunes_vocab.json')
-print(vocab['1'])
 
 class FolkLSTM(tf.keras.Model):
 
@@ -42,13 +39,10 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)  
         self.model = self.__create_model__(self.model_configs, data_dimensions)
 
-        
-        tokenizer_path = os.path.join(self.model_path, 'tunes_vocab.json')
-        if os.path.exists(tokenizer_path):
-            with open(tokenizer_path, 'r') as fp:
-                self.tunes_tokenizer = tf.keras.preprocessing.text.tokenizer_from_json(json.load(fp))
-
-        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
+            from_logits=True,
+            reduction = tf.keras.losses.Reduction.NONE
+        )
         self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
@@ -195,11 +189,18 @@ class FolkLSTM(tf.keras.Model):
     def grad(self, context, inputs, targets):
         with tf.GradientTape() as tape:
             outputs = self.__call_model__(context, inputs)
-            targets = tf.reshape(tf.sparse.to_dense(targets),(-1, self.data_dimensions['max_timesteps']))
+            targets = tf.squeeze(tf.sparse.to_dense(targets))
             loss_value = self.loss_fn(
                 y_pred = outputs,
                 y_true = targets,
             )
+            mask = tf.reshape(
+                tf.sequence_mask(context['tune_length'], self.data_dimensions['max_timesteps']),
+                (-1, self.data_dimensions['max_timesteps'])
+            )
+            loss_value = loss_value * tf.cast(mask, dtype=tf.float32)
+
+            loss_value = tf.reduce_mean(loss_value)
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
@@ -216,7 +217,7 @@ class FolkLSTM(tf.keras.Model):
         abc_tokens = []
         for token in output:
             if token:
-                abc_tokens.append(vocab[str(token)])
+                abc_tokens.append(self.vocab[str(token)])
         return ''.join(abc_tokens)
 
 
@@ -229,10 +230,9 @@ class FolkLSTM(tf.keras.Model):
     def train(self, dataset):
         train_loss_results = []
         train_accuracy_results = []
-        print_outputs_frequency = 50
+        print_outputs_frequency = 10
         save_frequency = 100
         num_epochs = 10000
-        step = 0
         self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
         if self.ckpt_manager.latest_checkpoint:
             print("Restored from {}".format(self.ckpt_manager.latest_checkpoint))
@@ -243,7 +243,7 @@ class FolkLSTM(tf.keras.Model):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
-            # Training loop - using batches of 32
+            # Training loop
             for i, (context, sequence) in enumerate(dataset):
                 # Optimize the model
                 loss_value, outputs = self.grad(
@@ -252,12 +252,12 @@ class FolkLSTM(tf.keras.Model):
                     sequence['output']
                 )
                 self.ckpt.step.assign_add(1)
-                self.update_tensorboard(loss_value, step)
+                self.update_tensorboard(loss_value, int(self.ckpt.step))
                 
                 if i % print_outputs_frequency == 0:
                     abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
                     print('---------- Generated Output -----------')
-                    print(''.join(abc_outputs))
+                    print(abc_outputs[0])
                     print('.......................................')
 
                     # print('-------------------- Input Sequence --------------------')
@@ -278,11 +278,9 @@ class FolkLSTM(tf.keras.Model):
                 # Compare predicted label to actual label
                 # training=True is needed only if there are layers with different
                 # behavior during training versus inference (e.g. Dropout).
-                #epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
-                step = step + 1
+                # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
 
             self.save_model_checkpoint()
-            tf.saved_model.save(self.model, os.path.join(self.model_path, 'saved_model'))
             # End epoch
             train_loss_results.append(epoch_loss_avg.result())
             train_accuracy_results.append(epoch_accuracy.result())

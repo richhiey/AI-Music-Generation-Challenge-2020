@@ -188,7 +188,7 @@ class ABCPreProcessor(PreProcessor):
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
             .shuffle(256)
-            .batch(2)
+            .batch(128)
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
@@ -209,7 +209,7 @@ class ABCPreProcessor(PreProcessor):
             len_key_vocab = len(json.loads(fp.read()))
         return {
             'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL - 1,
-            'tune_vocab_size': len_tunes_vocab,
+            'tune_vocab_size': len_tunes_vocab + 1,
             'rhythm_vocab_size': len_rhythm_vocab,
             'meter_vocab_size': len_meter_vocab,
             'key_vocab_size': len_key_vocab
