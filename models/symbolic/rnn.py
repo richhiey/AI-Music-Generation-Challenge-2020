@@ -11,6 +11,12 @@ def load_musical_vocab(vocab_path):
     else:
         return {}
 
+DEFAULT_TRAIN_CONFIG = {
+    'print_outputs_frequency': 100,
+    'save_frequency': 100,
+    'num_epochs': 100
+}
+
 
 class FolkLSTM(tf.keras.Model):
 
@@ -158,19 +164,16 @@ class FolkLSTM(tf.keras.Model):
 
 
 
-    def train(self, dataset):
+    def train(self, dataset, configs = DEFAULT_TRAIN_CONFIG):
         train_loss_results = []
         train_accuracy_results = []
-        print_outputs_frequency = 1
-        save_frequency = 1000
-        num_epochs = 10000
         self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
         if self.ckpt_manager.latest_checkpoint:
             print("Restored from {}".format(self.ckpt_manager.latest_checkpoint))
         else:
             print("Initializing from scratch.")
 
-        for epoch in range(num_epochs):
+        for epoch in range(configs['num_epochs']):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
@@ -185,7 +188,7 @@ class FolkLSTM(tf.keras.Model):
                 self.ckpt.step.assign_add(1)
                 self.update_tensorboard(loss_value, int(self.ckpt.step))
                 
-                if i % print_outputs_frequency == 0:
+                if i % configs['print_outputs_frequency'] == 0:
                     abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
                     print('---------- Generated Output -----------')
                     print(abc_outputs[0])
@@ -201,15 +204,22 @@ class FolkLSTM(tf.keras.Model):
                     # self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
                     # print('--------------------------------------------------')
                 
-                if i % save_frequency is 0:
+                if i % configs['save_frequency'] is 0:
                     self.save_model_checkpoint()
-                
+            
                 # Track progress
                 epoch_loss_avg.update_state(loss_value)  # Add current batch loss
                 # Compare predicted label to actual label
                 # training=True is needed only if there are layers with different
                 # behavior during training versus inference (e.g. Dropout).
                 # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
+
+            tf.keras.models.save_model(
+                self.model, 
+                os.path.join(self.model_path, 'folk_lstm/'), 
+                overwrite=True, 
+                include_optimizer=True
+            )
 
             self.save_model_checkpoint()
             # End epoch

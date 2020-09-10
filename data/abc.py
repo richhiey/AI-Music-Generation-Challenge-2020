@@ -181,15 +181,15 @@ class ABCPreProcessor(PreProcessor):
     # Run transformations on the dataset to prepare
     # for use with deep learning models
     # =============================================
-    def prepare_dataset(self, parsed_dataset, configs = None):
+    def prepare_dataset(self, parsed_dataset, batch_size = 16):
         return (
             parsed_dataset
             .filter(self.filter_max_length)
             .map(self.__pad_to_max_length__)
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
-            .shuffle(128)
-            .batch(16)
+            .shuffle(64)
+            .batch(batch_size)
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
