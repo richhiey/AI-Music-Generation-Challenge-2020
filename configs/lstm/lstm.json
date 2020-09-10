@@ -1,9 +1,5 @@
 {
 	"tune_embedding_size": "16",
-	"rhythm_embedding_size": "16",
-	"key_embedding_size": "16",
-	"meter_embedding_size": "16",
-	"bidirectional": "False",
 	"rnn": {
 		"num_layers": "1",
 		"num_units": "512",

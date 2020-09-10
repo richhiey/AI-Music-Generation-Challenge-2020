@@ -109,6 +109,7 @@ class ABCPreProcessor(PreProcessor):
                     tokenized_tune = tokenizer.tokenize_tune(
                         '<s>' + meter + key + tune + '</s>'
                     )
+                    print(tokenized_tune)
                     len_tokenized_tune = len(tokenized_tune)
                     if len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL:
                         sequence_example = serialize_example(
@@ -187,8 +188,8 @@ class ABCPreProcessor(PreProcessor):
             .map(self.__pad_to_max_length__)
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
-            .shuffle(configs['shuffle_buffer'])
-            .batch(configs['batch_size'])
+            .shuffle(128)
+            .batch(16)
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
@@ -198,21 +199,12 @@ class ABCPreProcessor(PreProcessor):
     # Get data dimensions required to create inputs
     # for models
     # =============================================
-    def get_data_dimensions(self):
-        with open(os.path.join(self.output_dir, 'tunes_vocab.json'), 'r') as fp:
+    def get_data_dimensions(self, vocab_dir):
+        with open(os.path.join(vocab_dir, 'tunes_vocab.json'), 'r') as fp:
             len_tunes_vocab = len(json.loads(fp.read())['word_to_idx'])
-        with open(os.path.join(self.output_dir, 'R_vocab.json'), 'r') as fp:
-            len_rhythm_vocab = len(json.loads(fp.read()))
-        with open(os.path.join(self.output_dir, 'M_vocab.json'), 'r') as fp:
-            len_meter_vocab = len(json.loads(fp.read()))
-        with open(os.path.join(self.output_dir, 'K_vocab.json'), 'r') as fp:
-            len_key_vocab = len(json.loads(fp.read()))
         return {
             'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL - 1,
             'tune_vocab_size': len_tunes_vocab + 1,
-            'rhythm_vocab_size': len_rhythm_vocab,
-            'meter_vocab_size': len_meter_vocab,
-            'key_vocab_size': len_key_vocab
         } 
     # =============================================
 
@@ -274,7 +266,9 @@ class ABCTokenizer():
                 vocab = json.loads(fp.read())
         else:
             uniq_keys = list(data.K.unique())
+            uniq_keys = ['K:' + key for key in uniq_keys]
             uniq_meters = list(data.M.unique())
+            uniq_meters = ['M:' + meter for meter in uniq_meters]
             final_vocab = BASE_ABC_VOCABULARY + uniq_meters + uniq_keys
             idx = list(range(1, len(final_vocab)))
             word_to_idx = dict(zip(final_vocab, map(str, idx)))

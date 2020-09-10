@@ -62,93 +62,34 @@ class FolkLSTM(tf.keras.Model):
         tune = tf.keras.Input(
             shape = (data_dimensions['max_timesteps'], 1)
         )
-        rhythm = tf.keras.Input(shape = (1,))
-        meter = tf.keras.Input(shape = (1,))
-        key = tf.keras.Input(shape = (1,))
         tune_length = tf.keras.Input(shape = (1,))
         #----------------------------------------
-        rhythm_embedding_size = int(model_configs['rhythm_embedding_size'])
-        rhythm_embedding = tf.keras.layers.Embedding(
-            input_dim = data_dimensions['rhythm_vocab_size'] + 1,
-            output_dim = rhythm_embedding_size,
-            name = 'rhythm_embedding'
-        )(rhythm)
-        r_temp = tf.keras.layers.Reshape((rhythm_embedding_size,))(rhythm_embedding)
-
-        key_embedding_size = int(model_configs['key_embedding_size'])
-        key_embedding = tf.keras.layers.Embedding(
-            input_dim = data_dimensions['key_vocab_size'] + 1,
-            output_dim = key_embedding_size,
-            name = 'key_embedding'
-        )(key)
-        k_temp = tf.keras.layers.Reshape((key_embedding_size,))(key_embedding)
-
-        meter_embedding_size = int(model_configs['meter_embedding_size'])
-        meter_embedding = tf.keras.layers.Embedding(
-            input_dim = data_dimensions['meter_vocab_size'] + 1,
-            output_dim = meter_embedding_size,
-            name = 'meter_embedding'
-        )(meter)
-        m_temp = tf.keras.layers.Reshape((meter_embedding_size,))(meter_embedding)
-
         tune_embedding_size = int(model_configs['tune_embedding_size'])
         tune_embedding = tf.keras.layers.Embedding(
-            input_dim = data_dimensions['tune_vocab_size'] + 1,
+            input_dim = data_dimensions['tune_vocab_size'],
             output_dim = tune_embedding_size,
             name = 'tune_embedding',
             mask_zero = True
         )(tune)
         tune_tensor = tf.keras.layers.Reshape((-1, tune_embedding_size))(tune_embedding)
-        #----------------------------------------        
-        key_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(k_temp)
-        rhythm_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(r_temp)
-        meter_tensor = tf.keras.layers.RepeatVector(tune_tensor.shape[1])(m_temp)
-        
-        context = tf.keras.layers.Concatenate(axis=-1)(
-            [rhythm_tensor, meter_tensor, key_tensor]
-        )
-        #----------------------------------------
-
-        #----------------------------------------
-        full_input = tf.keras.layers.Concatenate(axis=-1)(
-            [context, tune_tensor]
-        )
-        #----------------------------------------
+        #----------------------------------------                
         mask = tf.reshape(
             tf.sequence_mask(tune_length, data_dimensions['max_timesteps']),
             (-1, data_dimensions['max_timesteps'])
         )
 
-        if model_configs['bidirectional'] == 'True':            
-            stacked_fwd_cells = tf.keras.layers.StackedRNNCells(
-                self.create_RNN_cells(model_configs['rnn'])
-            )
-            stacked_bwd_cells = tf.keras.layers.StackedRNNCells(
-                self.create_RNN_cells(model_configs['rnn'])
-            )
+        stacked_cells = tf.keras.layers.StackedRNNCells(
+            self.create_RNN_cells(model_configs['rnn'])
+        )
 
-            forward_RNN = self.create_RNN_layer(stacked_fwd_cells)
-            backward_RNN = self.create_RNN_layer(stacked_bwd_cells, True)
-            bidirectional_RNN = tf.keras.layers.Bidirectional(
-                forward_RNN,
-                backward_layer = backward_RNN,
-                merge_mode = 'concat'
-            )
+        sequential_RNN = self.create_RNN_layer(stacked_cells)
 
-            rnn_output = bidirectional_RNN(full_input, mask  = mask)
-        else:
-            stacked_cells = tf.keras.layers.StackedRNNCells(
-                self.create_RNN_cells(model_configs['rnn'])
-            )
-
-            sequential_RNN = self.create_RNN_layer(stacked_cells)
-
-            rnn_output = sequential_RNN(full_input, mask  = mask)
+        rnn_output = sequential_RNN(tune_tensor, mask  = mask)
         #----------------------------------------
         next_tokens = tf.keras.layers.Dense(data_dimensions['tune_vocab_size'])(rnn_output)
         #----------------------------------------
         model = tf.keras.Model(
-            inputs=[tune, rhythm, meter, key, tune_length],
+            inputs=[tune, tune_length],
             outputs=next_tokens
         )
         #----------------------------------------
@@ -173,9 +114,6 @@ class FolkLSTM(tf.keras.Model):
     def __call_model__(self, context, input_sequence, training=False):
         return self.model([
             tf.squeeze(tf.sparse.to_dense(input_sequence)), 
-            context['R'],
-            context['M'],
-            context['K'],
             context['tune_length']
         ])
 
@@ -203,7 +141,7 @@ class FolkLSTM(tf.keras.Model):
     def update_tensorboard(self, loss, step, grads=None):
         with self.file_writer.as_default():
             tf.summary.scalar("Categorical Cross-Entropy", loss, step=step)
-            self.file_writer.flush()
+        self.file_writer.flush()
 
     def map_to_abc_notation(self, output):
         output = tf.squeeze(tf.argmax(tf.nn.softmax(output), axis = -1)).numpy()
