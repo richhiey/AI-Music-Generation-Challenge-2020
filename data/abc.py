@@ -109,7 +109,7 @@ class ABCPreProcessor(PreProcessor):
                     tokenized_tune = tokenizer.tokenize_tune(
                         '<s>' + meter + key + tune + '</s>'
                     )
-                    print(tokenized_tune)
+                    #print(tokenized_tune)
                     len_tokenized_tune = len(tokenized_tune)
                     if len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL:
                         sequence_example = serialize_example(
