@@ -40,6 +40,7 @@ CONDITIONAL_KEYS = {
 }
 
 MAX_TIMESTEPS_FOR_ABC_MODEL = 512
+MIN_TIMESTEPS_FOR_ABC_MODEL = 64
 
 ## Base vocabulary for models
 ## Inspired from the vocabulary of Folk-RNN models by Sturm et al. 

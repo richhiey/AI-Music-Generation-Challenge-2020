@@ -39,11 +39,8 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)  
         self.model = self.__create_model__(self.model_configs, data_dimensions)
 
-        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(
-            from_logits=True,
-            reduction = tf.keras.losses.Reduction.NONE
-        )
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -194,15 +191,11 @@ class FolkLSTM(tf.keras.Model):
                 y_pred = outputs,
                 y_true = targets,
             )
-            mask = tf.reshape(
-                tf.sequence_mask(context['tune_length'], self.data_dimensions['max_timesteps']),
-                (-1, self.data_dimensions['max_timesteps'])
-            )
-            loss_value = loss_value * tf.cast(mask, dtype=tf.float32)
 
             loss_value = tf.reduce_mean(loss_value)
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
+        gradients = [tf.clip_by_norm(g, 1.0) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
@@ -230,8 +223,8 @@ class FolkLSTM(tf.keras.Model):
     def train(self, dataset):
         train_loss_results = []
         train_accuracy_results = []
-        print_outputs_frequency = 10
-        save_frequency = 100
+        print_outputs_frequency = 1
+        save_frequency = 1000
         num_epochs = 10000
         self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
         if self.ckpt_manager.latest_checkpoint:

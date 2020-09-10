@@ -1,18 +1,22 @@
 ####################################################################
 # -------------- Pre-processing utilities for ABC data -------------
 ####################################################################
-import json
-import glob
 import os 
+import csv
+import glob
+import json
 
 import numpy as np
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+
+from tqdm import tqdm
 from .constants import  METADATA_KEYS, CONDITIONAL_KEYS, \
                         MAX_TIMESTEPS_FOR_ABC_MODEL, \
-                        BASE_ABC_VOCABULARY
+                        BASE_ABC_VOCABULARY, \
+                        MIN_TIMESTEPS_FOR_ABC_MODEL
 ####################################################################
 
 ## -------------------------------------------------------------------
@@ -24,7 +28,7 @@ class PreProcessor(object):
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         self.output_dir = output_dir
-        self.json_path = os.path.join(output_dir,  output_name + '.json')
+        self.csv_path = os.path.join(output_dir,  output_name + '.csv')
         self.tfrecord_path = os.path.join(output_dir, output_name + '.tfrecord')
 
 
@@ -36,36 +40,48 @@ class ABCPreProcessor(PreProcessor):
     # Preprocess all ABC tunes in a directory
     # =============================================
     def process(self, data_dir):
-        if not (os.path.exists(self.json_path)):
-            print('Processing files and writing extracted information to JSON ..')
-            write_json([], self.json_path)
+        print('Cool. Lets process these ABC files now!')
+        if not (os.path.exists(self.csv_path)):
+            print('Processing files and writing extracted information to CSV for easy processing from here onwards ...')
             files = glob.glob(data_dir + '/**/*.abc', recursive = True)
             
-            with open(self.json_path) as json_file: 
-                data = json.load(json_file)
+            print('CSV PATH --> ' + self.csv_path)
+            with open(self.csv_path, 'a') as tune_file:
+                csv_writer = csv.DictWriter(tune_file, fieldnames=['tune', 'R', 'M', 'K'])
+                csv_writer.writeheader()
+                print('Found ' + str(len(files)) + ' files in the ABC Data Directory. Looking into these files now ..')
                 for file_number, file in enumerate(files):
-                    print('========== ' + str(file_number) + '. ' + file + ' ==========')            
+                    print('---------------------------------------------------------')
+                    print(str(file_number) + '. ' + file) 
+
                     abc_tunes = separate_all_abc_tunes(file)
 
-                    for tune in abc_tunes:
+                    print('Extracting information and storing to CSV now ..')
+                    print('---------------------------------------------------------')
+
+                    for tune in tqdm(abc_tunes, total=len(abc_tunes)):
                         processed_tune = self.__preprocess_abc_tune__(
                             tune.strip().split('\n')
                         )
                         if (valid_data(processed_tune)):
-                            print(processed_tune)
+                            csv_writer.writerow(processed_tune)
                             self.num_files = self.num_files + 1
-                            print('------------------- Extracted Tune ' + str(self.num_files) + ' --------------------')
-                            print(processed_tune)
-                            if data is not None:
-                                data.append(processed_tune)
-                            else:
-                                data = [processed_tune]
-                            write_json(data, self.json_path)
 
+                    print('Stored tunes from file ' + file + ' to CSV!')
+                    print('---------------------------------------------------------')
             print('Number of tunes - ' + str(self.num_files))
         else:
-            print('The raw data has already been processed. Pre-processed information found at - ' + self.json_path)
-        return self.json_path
+            print('The raw data has already been processed. Pre-processed information found at - ' + self.csv_path)
+
+        data = pd.read_csv(self.csv_path)
+        #__visualize_dataset_stats__(data)
+
+        tokenizer = ABCTokenizer(os.path.join(self.output_dir, 'tunes_vocab.json'), data)
+        print('---------------------------------------------------------')
+        print('ABC Extended Vocabulary:')
+        print(tokenizer.return_vocabulary())
+        print('---------------------------------------------------------')
+        return self.csv_path
     # =============================================
 
 
@@ -73,61 +89,48 @@ class ABCPreProcessor(PreProcessor):
     # Save a bunch of processed ABC tunes as a 
     # TFRecord dataset
     # =============================================
-    def save_as_tfrecord_dataset(self):
+    def save_as_tfrecord_dataset(self, vocab_path):
         if not os.path.exists(self.tfrecord_path):
             print('Preparing to save extracted information into a TFRecord file at ' + self.tfrecord_path + ' ...')
-            with open(self.json_path) as json_file:
-                data = json.load(json_file)
-
-            print('Created required vocabularies for tokenizing the ABC tunes ...')
-            tokenizer = create_tunes_tokenizer(data, self.output_dir)
-            print(tokenizer.vocab)
-            key_vocab = create_vocabulary(
-                get_key_data('K', data),
-                os.path.join(self.output_dir, 'K_vocab.json')
-            )
-            meter_vocab = create_vocabulary(
-                get_key_data('M', data),
-                os.path.join(self.output_dir, 'M_vocab.json')
-            )
-            rhythm_vocab = create_vocabulary(
-                get_key_data('R', data),
-                os.path.join(self.output_dir, 'R_vocab.json')
-            )
-
-            writer = tf.io.TFRecordWriter(self.tfrecord_path)
+            
             print('Creating TFRecord File ...')
-            for i, abc_track in enumerate(data):
-                print('------------ Serializing example ' + str(i) + ' -------------')
-                print(abc_track)
-                tokenized_tune = tokenizer.tokenize_tune(
-                    '<s>M:' + abc_track['M'] + 'K:' + abc_track['K'] + abc_track['tune'] + '</s>'
-                )
-                len_tokenized_tune = len(tokenized_tune)
-                if (len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL):
-                    sequence_example = serialize_example(
-                        tf.pad(
-                            tf.convert_to_tensor(
-                                tokenized_tune[:-1],
-                                dtype=tf.int64
-                            ),
-                            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
-                            mode='CONSTANT'
-                        ),
-                        tf.pad(
-                            tf.convert_to_tensor(
-                                tokenized_tune[1:],
-                                dtype=tf.int64
-                            ),
-                            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
-                            mode='CONSTANT'
-                        ),
-                        tf.convert_to_tensor(key_vocab[abc_track['K']], dtype=tf.int64),
-                        tf.convert_to_tensor(meter_vocab[abc_track['M']], dtype=tf.int64),
-                        tf.convert_to_tensor(rhythm_vocab[abc_track['R']], dtype=tf.int64),
-                        tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64)
+            writer = tf.io.TFRecordWriter(self.tfrecord_path)
+            tokenizer = ABCTokenizer(vocab_path)
+            with open(self.csv_path) as csv_file:
+                num_lines = len(csv_file.readlines())
+            with open(self.csv_path, 'r') as tunes_file:
+                reader = csv.reader(tunes_file, delimiter=",")
+                next(reader) # Skip CSV Header row
+                for line in tqdm(reader, total=num_lines):
+                    # Tune - Idx 0
+                    tune = line[0]
+                    meter = 'M:' + line[2]
+                    key = 'K:' + line[3]
+                    tokenized_tune = tokenizer.tokenize_tune(
+                        '<s>' + meter + key + tune + '</s>'
                     )
-                    writer.write(sequence_example)
+                    len_tokenized_tune = len(tokenized_tune)
+                    if len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL:
+                        sequence_example = serialize_example(
+                            tf.pad(
+                                tf.convert_to_tensor(
+                                    tokenized_tune[:-1],
+                                    dtype=tf.int64
+                                ),
+                                [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
+                                mode='CONSTANT'
+                            ),
+                            tf.pad(
+                                tf.convert_to_tensor(
+                                    tokenized_tune[1:],
+                                    dtype=tf.int64
+                                ),
+                                [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
+                                mode='CONSTANT'
+                            ),
+                            tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64),
+                        )
+                        writer.write(sequence_example)
             writer.close()
             print('Done saving to TFRecord Dataset!')
         else:
@@ -146,9 +149,6 @@ class ABCPreProcessor(PreProcessor):
             'output': tf.io.VarLenFeature(tf.int64),
         }
         context_features = {
-            'K': tf.io.FixedLenFeature([], dtype=tf.int64),
-            'M': tf.io.FixedLenFeature([], dtype=tf.int64),
-            'R': tf.io.FixedLenFeature([], dtype=tf.int64),
             'tune_length': tf.io.FixedLenFeature([], dtype=tf.int64),
         }
 
@@ -187,8 +187,8 @@ class ABCPreProcessor(PreProcessor):
             .map(self.__pad_to_max_length__)
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
-            .shuffle(256)
-            .batch(128)
+            .shuffle(configs['shuffle_buffer'])
+            .batch(configs['batch_size'])
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
     # =============================================
@@ -261,39 +261,30 @@ class ABCPreProcessor(PreProcessor):
     # =============================================
 
 
-    # =============================================
-    # Visualize different counts over the ABC dataset
-    # =============================================
-    def visualize_stats(self):
-        with open(self.json_path) as json_file:
-            data = json.load(json_file)
-            __visualize_dataset_stats__(data)
-
-
-
 #########################################################################
 # HELPER FUNCTIONS
 #########################################################################
 class ABCTokenizer():
-    def __init__(self, vocab_path, tunes = []):
+    def __init__(self, vocab_path, data = None):
+        self.vocab = self.get_or_create_abc_vocabulary(vocab_path, data)
+
+    def get_or_create_abc_vocabulary(self, vocab_path, data):
         if os.path.exists(vocab_path):
             with open(vocab_path, 'r') as fp:
-                self.vocab = json.loads(fp.read())
+                vocab = json.loads(fp.read())
         else:
-            uniq_keys = list(set(get_key_data('K', tunes)))
-            uniq_keys = ['K:' + key for key in uniq_keys]
-            uniq_meters = list(set(get_key_data('M', tunes)))
-            uniq_meters = ['M:' + meter for meter in uniq_meters]
+            uniq_keys = list(data.K.unique())
+            uniq_meters = list(data.M.unique())
             final_vocab = BASE_ABC_VOCABULARY + uniq_meters + uniq_keys
             idx = list(range(1, len(final_vocab)))
-            print(idx)
             word_to_idx = dict(zip(final_vocab, map(str, idx)))
             idx_to_word = dict(zip(map(str, idx), final_vocab))
-            self.vocab = {
+            vocab = {
                 'word_to_idx': word_to_idx,
                 'idx_to_word': idx_to_word
             }
-            write_json(self.vocab, vocab_path)
+            write_json(vocab, vocab_path)
+        return vocab
 
     def return_vocabulary(self):
         return self.vocab
@@ -321,40 +312,10 @@ class ABCTokenizer():
                     i = i + 1
             else:
                 i = i + 1
-        print(abc_tokens)
         return tokens
 
 
-def plot_with_matplotlib(freq, title, xaxis, yaxis):
-    plt.plot(freq)
-    plt.title(title)
-    plt.xlabel(xaxis)
-    plt.ylabel(yaxis)
-    plt.show()
-
-def categorical_hist_with_matplotlib(category_dict, title):
-    names = list(category_dict.keys())
-    values = list(category_dict.values())
-    fig, axs = plt.subplots()
-    axs.bar(names, values, 1)
-    fig.suptitle(title)
-    plt.xticks(rotation='vertical')
-    plt.show()
-
-def create_tunes_tokenizer(tunes, output_dir):
-    vocab_fp = os.path.join(output_dir, 'tunes_vocab.json')
-    tokenizer = ABCTokenizer(vocab_fp, tunes)
-    return tokenizer
-
-def create_vocabulary(labels, vocab_fp):
-    vocab = dict(zip(set(labels), range(1, len(labels)+1))) 
-    write_json(vocab, vocab_fp)
-    return vocab
-
-def convert_labels_to_indices(labels, vocab):
-    return list(map(lambda x: vocab[x], labels))
-
-def serialize_example(_input, _output, key, meter, rhythm, tune_length):
+def serialize_example(_input, _output, tune_length):
     """
     Creates a tf.Example message ready to be written to a file.
     """
@@ -363,9 +324,6 @@ def serialize_example(_input, _output, key, meter, rhythm, tune_length):
     example_proto = tf.train.SequenceExample(
         context = tf.train.Features(
             feature = {
-                'K': _int64_feature(key),
-                'M': _int64_feature(meter),
-                'R': _int64_feature(rhythm),
                 'tune_length': _int64_feature(tune_length),
             }
         ),
@@ -440,17 +398,10 @@ def read_json(filename):
     return json_data
 
 def valid_data(x):
-    print(x)
-    return (x.get('tune') and x.get('K') and x.get('M'))
+    tune = x.get('tune')
+    return (tune and len(tune) > MIN_TIMESTEPS_FOR_ABC_MODEL and x.get('K') and x.get('M'))
 
-def get_key_data(key, data):
-    temp = []
-    for x in data:
-        if (valid_data(x)):
-            temp.append(x[key])
-    return temp
-
-def __visualize_dataset_stats__(data):
+def visualize_dataset_stats(df):
     freq = [len(x['tune']) for x in data]
     freq.sort()
     plot_with_matplotlib(
@@ -459,42 +410,31 @@ def __visualize_dataset_stats__(data):
         'Tune index',
         'Tune length'
     )
-
-    category_tune_lengths = {}
-    tunes_in_each_category = {}
-    tunes_in_each_key = {}
-    tunes_in_each_meter = {}
-    rhythms = set([x['R'] for x in data])
-    keys = set([x['K'] for x in  data])
-    meters = set([x['M'] for x in  data])
-    
-    for rhythm in rhythms:
-        category_tune_lengths[rhythm] = 0
-        tunes_in_each_category[rhythm] = 0
-    for key in keys:
-        tunes_in_each_key[key] = 0
-    for meter in meters:
-        tunes_in_each_meter[meter] = 0
-
-    for x in data:
-        category_tune_lengths[x['R']] = max(len(x['tune']), category_tune_lengths[x['R']])
-        tunes_in_each_category[x['R']] += 1
-        tunes_in_each_key[x['K']] += 1
-        tunes_in_each_meter[x['M']] += 1
-
     categorical_hist_with_matplotlib(
-        category_tune_lengths,
-        'Max tune length across categories'
-    )
-    categorical_hist_with_matplotlib(
-        tunes_in_each_category,
+        df['R'],
         'Number of tunes in each category'
     )
     categorical_hist_with_matplotlib(
-        tunes_in_each_meter,
+        df['M'],
         'Number of tunes in each meter'
     )
     categorical_hist_with_matplotlib(
-        tunes_in_each_key,
+        df['K'],
         'Number of tunes in each key'
     )
+
+def plot_with_matplotlib(freq, title, xaxis, yaxis):
+    plt.plot(freq)
+    plt.title(title)
+    plt.xlabel(xaxis)
+    plt.ylabel(yaxis)
+    plt.show()
+
+def categorical_hist_with_matplotlib(category_dict, title):
+    names = list(category_dict.keys())
+    values = list(category_dict.values())
+    fig, axs = plt.subplots()
+    axs.bar(names, values, 1)
+    fig.suptitle(title)
+    plt.xticks(rotation='vertical')
+    plt.show()

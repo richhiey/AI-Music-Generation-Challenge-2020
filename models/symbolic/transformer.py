@@ -6,22 +6,23 @@ import tensorflow as tf
 from datetime import datetime
 from .helpers import TransformerEncoder, TransformerDecoder
 
-MAX_SEQUENCE_LENGTH = 511
-vocab_path = '/home/richhiey/Desktop/workspace/projects/AI_Music_Challenge_2020/tfrecords/abc/tunes_vocab.json'
-if os.path.exists(vocab_path):
-    with open(vocab_path, 'r') as fp:
-        full_vocab = json.loads(fp.read())
-vocab = full_vocab['word_to_idx']
-vocab = {v: k for k, v in vocab.items()}
-#Initialize dict
-print(vocab['1'])
+def load_musical_vocab(vocab_path):
+    if os.path.exists(vocab_path):
+        with open(vocab_path, 'r') as fp:
+            full_vocab = json.loads(fp.read())
+        return full_vocab['idx_to_word']
+    else:
+        return {}
+
+
 class FolkTransformer(tf.keras.Model):
 
-    def __init__(self, model_path, data_dimensions):
+    def __init__(self, model_path, data_dimensions, vocab_path = None):
         super(FolkTransformer, self).__init__()
 
         self.data_dimensions = data_dimensions
         self.model_path = model_path
+        self.vocab = load_musical_vocab(os.path.join(vocab_path, 'tunes_vocab.json'))
 
         self.tensorboard_logdir = os.path.join(
             model_path,
@@ -137,8 +138,8 @@ class FolkTransformer(tf.keras.Model):
                 loss_value, outputs = self.grad(
                     input_sequence,
                     target_sequence,
-                    self.create_look_ahead_mask(MAX_SEQUENCE_LENGTH),
-                    self.create_padding_mask(context['tune_length'], MAX_SEQUENCE_LENGTH)
+                    self.create_look_ahead_mask(self.data_dimensions['max_timesteps']),
+                    self.create_padding_mask(context['tune_length'], self.data_dimensions['max_timesteps'])
                 )
                 abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
                 if i % print_outputs_frequency == 0:
