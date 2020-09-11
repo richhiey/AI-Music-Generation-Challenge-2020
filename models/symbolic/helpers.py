@@ -75,8 +75,6 @@ def scaled_dot_product_attention(q, k, v, mask):
     scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
 
     # add the mask to the scaled tensor.
-    print(scaled_attention_logits)
-    print(mask * -1e9)
     if mask is not None:
         scaled_attention_logits += (mask * -1e9)  
 
@@ -120,11 +118,9 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         q = self.wq(q)  # (batch_size, seq_len, d_model)
         k = self.wk(k)  # (batch_size, seq_len, d_model)
         v = self.wv(v)  # (batch_size, seq_len, d_model)
-
         q = self.split_heads(q, batch_size)  # (batch_size, num_heads, seq_len_q, depth)
         k = self.split_heads(k, batch_size)  # (batch_size, num_heads, seq_len_k, depth)
         v = self.split_heads(v, batch_size)  # (batch_size, num_heads, seq_len_v, depth)
-
         # scaled_attention.shape == (batch_size, num_heads, seq_len_q, depth)
         # attention_weights.shape == (batch_size, num_heads, seq_len_q, seq_len_k)
         scaled_attention, attention_weights = scaled_dot_product_attention(
@@ -139,7 +135,6 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         )
         # (batch_size, seq_len_q, d_model)
         output = self.dense(concat_attention)
-
         return output, attention_weights
 ## -------------------------------------------------------------------
 
@@ -187,8 +182,6 @@ class DecoderLayer(tf.keras.layers.Layer):
         super(DecoderLayer, self).__init__()
 
         self.mha1 = MultiHeadAttention(d_model, num_heads)
-        self.mha2 = MultiHeadAttention(d_model, num_heads)
-
         self.ffn = point_wise_feed_forward_network(d_model, dff)
 
         self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
@@ -199,15 +192,13 @@ class DecoderLayer(tf.keras.layers.Layer):
 
     def call(self, x, training, look_ahead_mask, padding_mask):
         # enc_output.shape == (batch_size, input_seq_len, d_model)
-
         attn1, attn_weights_block1 = self.mha1(x, x, x, look_ahead_mask)  # (batch_size, target_seq_len, d_model)
+        attn1 = tf.expand_dims(attn1, axis=1)
         attn1 = self.dropout1(attn1, training=training)
         out1 = self.layernorm1(attn1 + x)
-
         ffn_output = self.ffn(out1)  # (batch_size, target_seq_len, d_model)
         ffn_output = self.dropout2(ffn_output, training=training)
         out2 = self.layernorm2(ffn_output + out1)  # (batch_size, target_seq_len, d_model)
-
         return out2, attn_weights_block1
 ## -------------------------------------------------------------------
 ####################################################################
@@ -285,7 +276,6 @@ class TransformerDecoder(tf.keras.layers.Layer):
         self.dropout = tf.keras.layers.Dropout(rate)
 
     def call(self, x, look_ahead_mask, padding_mask, training=True):
-
         seq_len = tf.shape(x)[1]
         attention_weights = {}
     

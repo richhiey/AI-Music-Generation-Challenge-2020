@@ -110,7 +110,10 @@ class FolkTransformer(tf.keras.Model):
 
     def map_to_abc_notation(self, output):
         output = tf.squeeze(tf.argmax(tf.nn.softmax(output), axis = -1)).numpy()
-        abc_tokens = [vocab[str(token + 1)] for token in output]
+        abc_tokens = []
+        for token in output:
+            if token:
+                abc_tokens.append(self.vocab[str(token)])
         return ''.join(abc_tokens)
 
     def train(self, dataset):
@@ -147,7 +150,7 @@ class FolkTransformer(tf.keras.Model):
                     print(''.join(abc_outputs))
                     print('.......................................')
 
-                self.ckpt.step.assign_add(1)
+                self.ckpt.step.assign_add(int(self.ckpt.step))
                 self.update_tensorboard(loss_value, step)
                 if i % save_frequency is 0:
                     self.save_model_checkpoint()
@@ -189,12 +192,12 @@ class Transformer(tf.keras.Model):
             int(configs["d_model"]),
             int(configs["num_heads"]),
             int(configs["dff"]),
-            int(configs["target_vocab_size"]),
+            int(data_dimensions['tune_vocab_size']),
             int(configs["pe_target"]),
             float(configs["rate"])
         )
         self.final_layer = tf.keras.layers.Dense(
-            int(configs["target_vocab_size"])
+            int(data_dimensions['tune_vocab_size'])
         )
 
 
