@@ -72,16 +72,17 @@ class ABCPreProcessor(PreProcessor):
             print('Number of tunes - ' + str(self.num_files))
         else:
             print('The raw data has already been processed. Pre-processed information found at - ' + self.csv_path)
-
-        data = pd.read_csv(self.csv_path)
-        #__visualize_dataset_stats__(data)
-
-        tokenizer = ABCTokenizer(os.path.join(self.output_dir, 'tunes_vocab.json'), data)
-        print('---------------------------------------------------------')
-        print('ABC Extended Vocabulary:')
-        print(tokenizer.return_vocabulary())
-        print('---------------------------------------------------------')
         return self.csv_path
+    # =============================================
+
+
+    # =============================================
+    def create_tokenizer(self):
+        if self.csv_path or csv_path:
+            data = pd.read_csv(self.csv_path)
+            #__visualize_dataset_stats__(data)
+            tokenizer = ABCTokenizer(os.path.join(self.output_dir, 'tunes_vocab.json'), data)
+            return tokenizer
     # =============================================
 
 
@@ -89,13 +90,12 @@ class ABCPreProcessor(PreProcessor):
     # Save a bunch of processed ABC tunes as a 
     # TFRecord dataset
     # =============================================
-    def save_as_tfrecord_dataset(self, vocab_path):
+    def save_as_tfrecord_dataset(self, tokenizer):
         if not os.path.exists(self.tfrecord_path):
             print('Preparing to save extracted information into a TFRecord file at ' + self.tfrecord_path + ' ...')
             
             print('Creating TFRecord File ...')
             writer = tf.io.TFRecordWriter(self.tfrecord_path)
-            tokenizer = ABCTokenizer(vocab_path)
             with open(self.csv_path) as csv_file:
                 num_lines = len(csv_file.readlines())
             with open(self.csv_path, 'r') as tunes_file:
@@ -109,7 +109,6 @@ class ABCPreProcessor(PreProcessor):
                     tokenized_tune = tokenizer.tokenize_tune(
                         '<s>' + meter + key + tune + '</s>'
                     )
-                    #print(tokenized_tune)
                     len_tokenized_tune = len(tokenized_tune)
                     if len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL:
                         sequence_example = serialize_example(
