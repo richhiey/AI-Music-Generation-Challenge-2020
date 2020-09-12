@@ -1,7 +1,7 @@
 {
-	"num_layers": "1", 
+	"num_layers": "6", 
 	"d_model": "256",
-	"num_heads": "4",
+	"num_heads": "8",
 	"dff": "512",
 	"pe_target": "512",
 	"rate": "0.01"

@@ -78,6 +78,7 @@ class FolkTransformer(tf.keras.Model):
             )
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
+        gradients = [tf.clip_by_norm(g, 5.0) for g in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
