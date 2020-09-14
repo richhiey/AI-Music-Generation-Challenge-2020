@@ -43,7 +43,7 @@ class FolkTransformer(tf.keras.Model):
 
         self.model = Transformer(self.model_configs, self.data_dimensions)
         self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.optimizer = tf.keras.optimizers.SGD(learning_rate=0.01)
+        self.optimizer = tf.keras.optimizers.Adam()
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -78,7 +78,7 @@ class FolkTransformer(tf.keras.Model):
             )
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
-        gradients = [tf.clip_by_norm(g, 5.0) for g in gradients]
+        gradients = [(tf.clip_by_value(grad, -1.0, 1.0)) for grad in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
@@ -120,9 +120,9 @@ class FolkTransformer(tf.keras.Model):
     def train(self, dataset):
         train_loss_results = []
         train_accuracy_results = []
-        print_outputs_frequency = 50
-        save_frequency = 100
-        num_epochs = 10000
+        print_outputs_frequency = 100
+        save_frequency = 1000
+        num_epochs = 100
         step = 0
         self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
         if self.ckpt_manager.latest_checkpoint:
@@ -134,7 +134,6 @@ class FolkTransformer(tf.keras.Model):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
-            # Training loop - using batches of 32
             for i, (context, sequence) in enumerate(dataset):
                 # Optimize the model
                 input_sequence = tf.sparse.to_dense(sequence['input'])
@@ -148,7 +147,7 @@ class FolkTransformer(tf.keras.Model):
                 abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
                 if i % print_outputs_frequency == 0:
                     print('---------- Generated Output -----------')
-                    print(''.join(abc_outputs))
+                    print(abc_outputs[0])
                     print('.......................................')
 
                 self.ckpt.step.assign_add(int(self.ckpt.step))

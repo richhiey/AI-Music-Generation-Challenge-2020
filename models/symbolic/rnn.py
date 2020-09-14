@@ -13,7 +13,7 @@ def load_musical_vocab(vocab_path):
 
 DEFAULT_TRAIN_CONFIG = {
     'print_outputs_frequency': 100,
-    'save_frequency': 100,
+    'save_frequency': 1000,
     'num_epochs': 100
 }
 
@@ -139,7 +139,7 @@ class FolkLSTM(tf.keras.Model):
             loss_value = tf.reduce_mean(loss_value)
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
-        gradients = [tf.clip_by_norm(g, 1.0) for g in gradients]
+        gradients = [(tf.clip_by_value(grad, -1.0, 1.0)) for grad in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
