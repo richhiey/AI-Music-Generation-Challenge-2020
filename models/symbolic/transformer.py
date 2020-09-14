@@ -6,6 +6,13 @@ import tensorflow as tf
 from datetime import datetime
 from .helpers import TransformerEncoder, TransformerDecoder
 
+DEFAULT_TRAIN_CONFIGS = {
+    'print_outputs_frequency': 100
+    'save_frequency': 1000
+    'num_epochs': 100
+}
+
+
 def load_musical_vocab(vocab_path):
     if os.path.exists(vocab_path):
         with open(vocab_path, 'r') as fp:
@@ -13,6 +20,21 @@ def load_musical_vocab(vocab_path):
         return full_vocab['idx_to_word']
     else:
         return {}
+
+class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
+  def __init__(self, d_model, warmup_steps=4000):
+    super(CustomSchedule, self).__init__()
+    
+    self.d_model = d_model
+    self.d_model = tf.cast(self.d_model, tf.float32)
+
+    self.warmup_steps = warmup_steps
+    
+  def __call__(self, step):
+    arg1 = tf.math.rsqrt(step)
+    arg2 = step * (self.warmup_steps ** -1.5)
+    
+    return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
 
 class FolkTransformer(tf.keras.Model):
@@ -43,7 +65,13 @@ class FolkTransformer(tf.keras.Model):
 
         self.model = Transformer(self.model_configs, self.data_dimensions)
         self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.optimizer = tf.keras.optimizers.Adam()
+        learning_rate = CustomSchedule(d_model)
+        optimizer = tf.keras.optimizers.Adam(
+            learning_rate,
+            beta_1 = 0.9,
+            beta_2 = 0.98, 
+            epsilon = 1e-9
+        )
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -78,7 +106,7 @@ class FolkTransformer(tf.keras.Model):
             )
             print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
-        gradients = [(tf.clip_by_value(grad, -1.0, 1.0)) for grad in gradients]
+        gradients = [(tf.clip_by_norm(grad, 1.0)) for grad in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
@@ -117,20 +145,19 @@ class FolkTransformer(tf.keras.Model):
                 abc_tokens.append(self.vocab[str(token)])
         return ''.join(abc_tokens)
 
-    def train(self, dataset):
+
+    @tf.function
+    def train(self, dataset, configs = DEFAULT_TRAIN_CONFIGS):
         train_loss_results = []
         train_accuracy_results = []
-        print_outputs_frequency = 100
-        save_frequency = 1000
-        num_epochs = 100
-        step = 0
+
         self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
         if self.ckpt_manager.latest_checkpoint:
             print("Restored from {}".format(self.ckpt_manager.latest_checkpoint))
         else:
             print("Initializing from scratch.")
 
-        for epoch in range(num_epochs):
+        for epoch in range(config['num_epochs']):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
@@ -145,14 +172,14 @@ class FolkTransformer(tf.keras.Model):
                     self.create_padding_mask(context['tune_length'], self.data_dimensions['max_timesteps'])
                 )
                 abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
-                if i % print_outputs_frequency == 0:
+                if i % configs['print_outputs_frequency'] == 0:
                     print('---------- Generated Output -----------')
                     print(abc_outputs[0])
                     print('.......................................')
 
-                self.ckpt.step.assign_add(int(self.ckpt.step))
-                self.update_tensorboard(loss_value, step)
-                if i % save_frequency is 0:
+                self.ckpt.step.assign_add(1)
+                self.update_tensorboard(loss_value, int(self.ckpt.step))
+                if i % configs['save_frequency'] is 0:
                     self.save_model_checkpoint()
                 # Track progress
                 epoch_loss_avg.update_state(loss_value)  # Add current batch loss
@@ -160,7 +187,6 @@ class FolkTransformer(tf.keras.Model):
                 # training=True is needed only if there are layers with different
                 # behavior during training versus inference (e.g. Dropout).
                 # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
-                step = step + 1
 
             self.save_model_checkpoint()
             # End epoch

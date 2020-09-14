@@ -2,20 +2,21 @@ import os
 import json
 from datetime import datetime
 import tensorflow as tf
+from tensorboard.plugins.hparams import api as hp
 
 def load_musical_vocab(vocab_path):
     if os.path.exists(vocab_path):
         with open(vocab_path, 'r') as fp:
             full_vocab = json.loads(fp.read())
-        return full_vocab['idx_to_word']
+        return full_vocab
     else:
         return {}
 
-DEFAULT_TRAIN_CONFIG = {
-    'print_outputs_frequency': 100,
-    'save_frequency': 1000,
-    'num_epochs': 100
-}
+def scheduler(epoch, lr):
+    if epoch < 10:
+        return lr
+    else:
+        return lr * tf.math.exp(-0.1)
 
 
 class FolkLSTM(tf.keras.Model):
@@ -45,8 +46,10 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)  
         self.model = self.__create_model__(self.model_configs, data_dimensions)
 
-        self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.optimizer = tf.keras.optimizers.Adam(0.01)
+        self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.optimizer = tf.keras.optimizers.Adam(
+            learning_rate = tf.keras.optimizers.schedules.LearningRateSchedule(scheduler)
+        )
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -124,22 +127,28 @@ class FolkLSTM(tf.keras.Model):
         ])
 
 
+    def loss_function(outputs = outputs,  targets = targets, weighted = False):
+        mask = tf.math.logical_not(tf.math.equal(real, 0))
+        loss_ = self.cross_entropy(outputs, targets)
+        mask = tf.cast(mask, dtype=loss_.dtype)
+        loss_ *= mask
+        return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
+
+
     def call(self, context, sequence, training=False):
         return self.__call_model__(context, sequence['input'], training)
 
+    @tf.function
     def grad(self, context, inputs, targets):
         with tf.GradientTape() as tape:
             outputs = self.__call_model__(context, inputs)
             targets = tf.squeeze(tf.sparse.to_dense(targets))
-            loss_value = self.loss_fn(
-                y_pred = outputs,
-                y_true = targets,
+            loss_value = self.loss_function(
+                ouputs = outputs,
+                targets = targets
             )
-
-            loss_value = tf.reduce_mean(loss_value)
-            print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
-        gradients = [(tf.clip_by_value(grad, -1.0, 1.0)) for grad in gradients]
+        gradients = [(tf.clip_by_norm(grad, 3.0)) for grad in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
         return loss_value, outputs
 
@@ -154,14 +163,13 @@ class FolkLSTM(tf.keras.Model):
         abc_tokens = []
         for token in output:
             if token:
-                abc_tokens.append(self.vocab[str(token)])
+                abc_tokens.append(self.vocab['idx_to_word'][str(token)])
         return ''.join(abc_tokens)
 
 
     def save_model_checkpoint(self):
         save_path = self.ckpt_manager.save()
         print("Saved checkpoint for step {}: {}".format(int(self.ckpt.step), save_path))
-
 
 
     def train(self, dataset, configs = DEFAULT_TRAIN_CONFIG):
@@ -186,7 +194,7 @@ class FolkLSTM(tf.keras.Model):
                     sequence['output']
                 )
                 self.ckpt.step.assign_add(1)
-                self.update_tensorboard(loss_value, int(self.ckpt.step))
+                self.update_tensorboard(loss_value, tf.cast(self.ckpt.step, tf.int64))
                 
                 if i % configs['print_outputs_frequency'] == 0:
                     abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
@@ -235,10 +243,30 @@ class FolkLSTM(tf.keras.Model):
                 )
 
 
-    def generate(self, seed, conditioning_signals, output_path):
-        output = self.model(conditioning_signals, seed)
-        print(output)
-        return output
+    def generate_abc_tune(self, seed_tokens, temperature = 1.0):
+
+        self.model.reset_states()
+
+        current_token = ''
+        text_generated = []
+
+        seed = tf.expand_dims([seed_tokens], 0)
+        start_str = [self.vocab['idx_to_word'][token] for token in seed_tokens]
+
+        while (current_token is not '</s>'):
+            # Add batch dimension
+            # Pad to max length
+            seed = tf.pad(seed, [[0,0], [0, self.data_dimensions['max_timesteps']]])
+            outputs = self.__call_model__(seed, [len(seed)])
+            # Remove batch dimension
+            predictions = tf.squeeze(predictions, 0)
+            predictions = predictions / temperature
+            predicted_id = tf.random.categorical(predictions, num_samples = 1)[-1, 0].numpy()
+
+            seed = tf.expand_dims([predicted_id], 0)
+            text_generated.append(self.vocab['word_to_idx'][str(predicted_id)])
+
+        return (''.join(text_generated))
 
 
 
