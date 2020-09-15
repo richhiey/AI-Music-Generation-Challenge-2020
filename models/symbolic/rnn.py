@@ -25,10 +25,12 @@ DEFAULT_TRAIN_CONFIG = {
 }
 
 initial_learning_rate = 0.01
-decay_steps = 100.0
+decay_steps = 10000.0
 decay_rate = 0.9
-learning_rate_fn = tf.keras.optimizers.schedules.InverseTimeDecay(
-  initial_learning_rate, decay_steps, decay_rate)
+end_learning_rate = 0.00001
+learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
+  initial_learning_rate, decay_steps, end_learning_rate, power=3
+)
 
 
 class FolkLSTM(tf.keras.Model):
@@ -57,8 +59,8 @@ class FolkLSTM(tf.keras.Model):
                 self.model_configs = json.load(fp)
                 print(self.model_configs)
         saved_model_dir = os.path.join(self.model_path, 'folk_lstm')
-        if os.path.exists(saved_model_dir):
-            self.model = self.__create_model__(self.model_configs, data_dimensions)
+
+        self.model = self.__create_model__(self.model_configs, data_dimensions)
 
         self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
@@ -81,9 +83,8 @@ class FolkLSTM(tf.keras.Model):
     def __create_model__(self, model_configs, data_dimensions):
         #----------------------------------------
         tune = tf.keras.Input(
-            shape = (data_dimensions['max_timesteps'], 1)
+            batch_input_shape = (16, data_dimensions['max_timesteps'], 1),
         )
-        tune_length = tf.keras.Input(shape = (1,))
         #----------------------------------------
         tune_embedding_size = int(model_configs['tune_embedding_size'])
         tune_embedding = tf.keras.layers.Embedding(
@@ -98,9 +99,9 @@ class FolkLSTM(tf.keras.Model):
             self.create_RNN_cells(model_configs['rnn'])
         )
 
-        sequential_RNN = self.create_RNN_layer(stacked_cells)
+        self.sequential_RNN = self.create_RNN_layer(stacked_cells)
 
-        rnn_output = sequential_RNN(tune_tensor)
+        rnn_output = self.sequential_RNN(tune_tensor)
         #----------------------------------------
         next_tokens = tf.keras.layers.Dense(data_dimensions['tune_vocab_size'])(rnn_output)
         #----------------------------------------
@@ -233,12 +234,6 @@ class FolkLSTM(tf.keras.Model):
                 # behavior during training versus inference (e.g. Dropout).
                 # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
 
-            tf.keras.models.save_model(
-                self.model, 
-                os.path.join(self.model_path, 'folk_lstm/'), 
-                overwrite=True, 
-            )
-
             self.save_model_checkpoint()
             # End epoch
             train_loss_results.append(epoch_loss_avg.result())
@@ -257,7 +252,6 @@ class FolkLSTM(tf.keras.Model):
 
         current_token = ''
         text_generated = start_tokens
-
         start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
         start_token_idx = tf.expand_dims(start_token_idx, 0)
         print(self.vocab)
@@ -275,9 +269,9 @@ class FolkLSTM(tf.keras.Model):
             # Remove batch dimension
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
-            predicted_id = tf.random.categorical(predictions, num_samples = 1)[-1, 0].numpy()
-
+            self.map_to_abc_notation(predictions)
             start_token_idx = tf.expand_dims([predicted_id], 0)
             current_token = self.vocab['idx_to_word'][str(predicted_id)]
             text_generated.append(current_token)
+            print(text_generated)
         return (''.join(text_generated))

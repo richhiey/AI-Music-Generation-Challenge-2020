@@ -7,8 +7,8 @@ from datetime import datetime
 from .helpers import TransformerEncoder, TransformerDecoder
 
 DEFAULT_TRAIN_CONFIGS = {
-    'print_outputs_frequency': 100
-    'save_frequency': 1000
+    'print_outputs_frequency': 100,
+    'save_frequency': 1000,
     'num_epochs': 100
 }
 
@@ -65,8 +65,8 @@ class FolkTransformer(tf.keras.Model):
 
         self.model = Transformer(self.model_configs, self.data_dimensions)
         self.loss_fn = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        learning_rate = CustomSchedule(d_model)
-        optimizer = tf.keras.optimizers.Adam(
+        learning_rate = CustomSchedule(int(self.model_configs['d_model']))
+        self.optimizer = tf.keras.optimizers.Adam(
             learning_rate,
             beta_1 = 0.9,
             beta_2 = 0.98, 
@@ -146,7 +146,6 @@ class FolkTransformer(tf.keras.Model):
         return ''.join(abc_tokens)
 
 
-    @tf.function
     def train(self, dataset, configs = DEFAULT_TRAIN_CONFIGS):
         train_loss_results = []
         train_accuracy_results = []
@@ -157,7 +156,7 @@ class FolkTransformer(tf.keras.Model):
         else:
             print("Initializing from scratch.")
 
-        for epoch in range(config['num_epochs']):
+        for epoch in range(configs['num_epochs']):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 

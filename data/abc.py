@@ -188,6 +188,7 @@ class ABCPreProcessor(PreProcessor):
             # cache the dataset to memory to get a speedup while reading from it.
             .cache()
             .shuffle(64)
+            .repeat()
             .batch(batch_size)
             .prefetch(tf.data.experimental.AUTOTUNE)
         )
