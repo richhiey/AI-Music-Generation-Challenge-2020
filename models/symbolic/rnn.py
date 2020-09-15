@@ -18,6 +18,18 @@ def scheduler(epoch, lr):
     else:
         return lr * tf.math.exp(-0.1)
 
+DEFAULT_TRAIN_CONFIG = {
+    'print_outputs_frequency': 100,
+    'save_frequency': 1000,
+    'num_epochs': 100,
+}
+
+initial_learning_rate = 0.01
+decay_steps = 100.0
+decay_rate = 0.9
+learning_rate_fn = tf.keras.optimizers.schedules.InverseTimeDecay(
+  initial_learning_rate, decay_steps, decay_rate)
+
 
 class FolkLSTM(tf.keras.Model):
 
@@ -43,13 +55,13 @@ class FolkLSTM(tf.keras.Model):
         if os.path.exists(model_config_path):
             with open(model_config_path, 'r') as fp:
                 self.model_configs = json.load(fp)
-                print(self.model_configs)  
-        self.model = self.__create_model__(self.model_configs, data_dimensions)
+                print(self.model_configs)
+        saved_model_dir = os.path.join(self.model_path, 'folk_lstm')
+        if os.path.exists(saved_model_dir):
+            self.model = self.__create_model__(self.model_configs, data_dimensions)
 
         self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.optimizer = tf.keras.optimizers.Adam(
-            learning_rate = tf.keras.optimizers.schedules.LearningRateSchedule(scheduler)
-        )
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -82,23 +94,18 @@ class FolkLSTM(tf.keras.Model):
         )(tune)
         tune_tensor = tf.keras.layers.Reshape((-1, tune_embedding_size))(tune_embedding)
         #----------------------------------------                
-        mask = tf.reshape(
-            tf.sequence_mask(tune_length, data_dimensions['max_timesteps']),
-            (-1, data_dimensions['max_timesteps'])
-        )
-
         stacked_cells = tf.keras.layers.StackedRNNCells(
             self.create_RNN_cells(model_configs['rnn'])
         )
 
         sequential_RNN = self.create_RNN_layer(stacked_cells)
 
-        rnn_output = sequential_RNN(tune_tensor, mask  = mask)
+        rnn_output = sequential_RNN(tune_tensor)
         #----------------------------------------
         next_tokens = tf.keras.layers.Dense(data_dimensions['tune_vocab_size'])(rnn_output)
         #----------------------------------------
         model = tf.keras.Model(
-            inputs=[tune, tune_length],
+            inputs=tune,
             outputs=next_tokens
         )
         #----------------------------------------
@@ -120,33 +127,37 @@ class FolkLSTM(tf.keras.Model):
             go_backwards = go_backwards,
         )
 
-    def __call_model__(self, context, input_sequence, training=False):
+    def __call_model__(self, input_sequence, sparse=True, training=False):
+        if sparse:
+            input_sequence = tf.squeeze(tf.sparse.to_dense(input_sequence))
         return self.model([
-            tf.squeeze(tf.sparse.to_dense(input_sequence)), 
-            context['tune_length']
+            input_sequence,
         ])
 
 
-    def loss_function(outputs = outputs,  targets = targets, weighted = False):
-        mask = tf.math.logical_not(tf.math.equal(real, 0))
-        loss_ = self.cross_entropy(outputs, targets)
+    def loss_function(self, outputs,  targets, weighted = False):
+        mask = tf.math.logical_not(tf.math.equal(outputs, 0))
+        loss_ = self.cross_entropy(
+            y_pred = outputs, 
+            y_true = targets
+        )
         mask = tf.cast(mask, dtype=loss_.dtype)
         loss_ *= mask
         return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
 
 
-    def call(self, context, sequence, training=False):
-        return self.__call_model__(context, sequence['input'], training)
+    def call(self, sequence, training=False):
+        return self.__call_model__(sequence['input'])
 
-    @tf.function
     def grad(self, context, inputs, targets):
         with tf.GradientTape() as tape:
-            outputs = self.__call_model__(context, inputs)
-            targets = tf.squeeze(tf.sparse.to_dense(targets))
+            outputs = self.__call_model__(inputs)
+            targets = tf.reshape(tf.sparse.to_dense(targets), (-1, 255))
             loss_value = self.loss_function(
-                ouputs = outputs,
+                outputs = outputs,
                 targets = targets
             )
+            print(loss_value)
         gradients = tape.gradient(loss_value, self.model.trainable_variables)
         gradients = [(tf.clip_by_norm(grad, 3.0)) for grad in gradients]
         self.optimizer.apply_gradients(zip(gradients, self.model.trainable_variables))
@@ -226,7 +237,6 @@ class FolkLSTM(tf.keras.Model):
                 self.model, 
                 os.path.join(self.model_path, 'folk_lstm/'), 
                 overwrite=True, 
-                include_optimizer=True
             )
 
             self.save_model_checkpoint()
@@ -243,31 +253,31 @@ class FolkLSTM(tf.keras.Model):
                 )
 
 
-    def generate_abc_tune(self, seed_tokens, temperature = 1.0):
-
-        self.model.reset_states()
+    def complete_tune(self, start_tokens, temperature = 1.0):
 
         current_token = ''
-        text_generated = []
+        text_generated = start_tokens
 
-        seed = tf.expand_dims([seed_tokens], 0)
-        start_str = [self.vocab['idx_to_word'][token] for token in seed_tokens]
+        start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
+        start_token_idx = tf.expand_dims(start_token_idx, 0)
+        print(self.vocab)
 
         while (current_token is not '</s>'):
             # Add batch dimension
             # Pad to max length
-            seed = tf.pad(seed, [[0,0], [0, self.data_dimensions['max_timesteps']]])
-            outputs = self.__call_model__(seed, [len(seed)])
+            seed = tf.pad(
+                tf.convert_to_tensor(start_token_idx, dtype=tf.int32),
+                [[0,0], [0, self.data_dimensions['max_timesteps'] - len(start_token_idx)]],
+                mode='CONSTANT'
+            )
+            #seed = tf.squeeze(tf.sparse.to_dense(seed))
+            predictions = self.model(seed)
             # Remove batch dimension
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
             predicted_id = tf.random.categorical(predictions, num_samples = 1)[-1, 0].numpy()
 
-            seed = tf.expand_dims([predicted_id], 0)
-            text_generated.append(self.vocab['word_to_idx'][str(predicted_id)])
-
+            start_token_idx = tf.expand_dims([predicted_id], 0)
+            current_token = self.vocab['idx_to_word'][str(predicted_id)]
+            text_generated.append(current_token)
         return (''.join(text_generated))
-
-
-
-
