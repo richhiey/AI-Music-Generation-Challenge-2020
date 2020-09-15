@@ -120,6 +120,7 @@ class FolkLSTM(tf.keras.Model):
             RNN_unit = tf.keras.layers.GRUCell
         return [RNN_unit(int(configs['num_units'])) for _ in range(int(configs['num_layers']))]
 
+
     def create_RNN_layer(self, cells, go_backwards = False):
         return tf.keras.layers.RNN(
             cells,
@@ -127,6 +128,7 @@ class FolkLSTM(tf.keras.Model):
             zero_output_for_mask = True,
             go_backwards = go_backwards,
         )
+
 
     def __call_model__(self, input_sequence, sparse=True, training=False):
         if sparse:
@@ -150,6 +152,7 @@ class FolkLSTM(tf.keras.Model):
     def call(self, sequence, training=False):
         return self.__call_model__(sequence['input'])
 
+    
     def grad(self, context, inputs, targets):
         with tf.GradientTape() as tape:
             outputs = self.__call_model__(inputs)
@@ -170,6 +173,7 @@ class FolkLSTM(tf.keras.Model):
             tf.summary.scalar("Categorical Cross-Entropy", loss, step=step)
         self.file_writer.flush()
 
+        
     def map_to_abc_notation(self, output):
         output = tf.squeeze(tf.argmax(tf.nn.softmax(output), axis = -1)).numpy()
         abc_tokens = []
@@ -213,7 +217,6 @@ class FolkLSTM(tf.keras.Model):
                     print('---------- Generated Output -----------')
                     print(abc_outputs[0])
                     print('.......................................')
-
                     # print('-------------------- Input Sequence --------------------')
                     # self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
                     # print('--------------------------------------------------')
@@ -269,9 +272,11 @@ class FolkLSTM(tf.keras.Model):
             # Remove batch dimension
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
-            self.map_to_abc_notation(predictions)
-            start_token_idx = tf.expand_dims([predicted_id], 0)
+            print(predictions)
+            predicted_id = tf.random.categorical(predictions, 1)[-1,0].numpy()
+            seed = tf.expand_dims([predicted_id], 0)
             current_token = self.vocab['idx_to_word'][str(predicted_id)]
             text_generated.append(current_token)
-            print(text_generated)
-        return (''.join(text_generated))
+            print(''.join(text_generated))
+
+        return ''.join(text_generated)
