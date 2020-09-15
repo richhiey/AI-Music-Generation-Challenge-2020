@@ -264,8 +264,8 @@ class FolkLSTM(tf.keras.Model):
         start_token_idx = tf.expand_dims(start_token_idx, 0)
         print(self.vocab)
 
-        while (current_token is not '</s>'):
-            # Add batch dimension
+        while not (current_token is '</s>'):
+                # Add batch dimension
             # Pad to max length
             seed = tf.pad(
                 tf.convert_to_tensor(start_token_idx, dtype=tf.int32),
@@ -278,9 +278,11 @@ class FolkLSTM(tf.keras.Model):
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
             predicted_id = tf.random.categorical(predictions, 1)[-1,0].numpy()
-            seed = tf.expand_dims([predicted_id], 0)
-            current_token = self.vocab['idx_to_word'][str(predicted_id)]
-            text_generated.append(current_token)
-            print(''.join(text_generated))
+
+            if predicted_id:
+                seed = tf.expand_dims([predicted_id], 0)
+                current_token = self.vocab['idx_to_word'][str(predicted_id)]
+                text_generated.append(current_token)
+                print(''.join(text_generated))
 
         return ''.join(text_generated)
