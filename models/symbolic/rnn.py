@@ -24,7 +24,7 @@ DEFAULT_TRAIN_CONFIG = {
     'num_epochs': 100,
 }
 
-initial_learning_rate = 0.01
+initial_learning_rate = 0.001
 decay_steps = 10000.0
 decay_rate = 0.9
 end_learning_rate = 0.00001
@@ -35,7 +35,7 @@ learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
 
 class FolkLSTM(tf.keras.Model):
 
-    def __init__(self, model_path, data_dimensions, vocab_path = None):
+    def __init__(self, model_path, data_dimensions, vocab_path = None, training=True):
         super(FolkLSTM, self).__init__()
         
         self.data_dimensions = data_dimensions
@@ -60,7 +60,7 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)
         saved_model_dir = os.path.join(self.model_path, 'folk_lstm')
 
-        self.model = self.__create_model__(self.model_configs, data_dimensions)
+        self.model = self.__create_model__(self.model_configs, data_dimensions, not training)
 
         self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
@@ -80,10 +80,14 @@ class FolkLSTM(tf.keras.Model):
         return self.model_configs
 
 
-    def __create_model__(self, model_configs, data_dimensions):
+    def __create_model__(self, model_configs, data_dimensions, stateful):
         #----------------------------------------
+        if stateful:
+            batch_size = 1
+        else:
+            batch_size = data_dimensions['batch_size']
         tune = tf.keras.Input(
-            batch_input_shape = (16, data_dimensions['max_timesteps'], 1),
+            batch_input_shape = (batch_size, data_dimensions['max_timesteps'], 1),
         )
         #----------------------------------------
         tune_embedding_size = int(model_configs['tune_embedding_size'])
@@ -99,7 +103,7 @@ class FolkLSTM(tf.keras.Model):
             self.create_RNN_cells(model_configs['rnn'])
         )
 
-        self.sequential_RNN = self.create_RNN_layer(stacked_cells)
+        self.sequential_RNN = self.create_RNN_layer(stacked_cells, stateful)
 
         rnn_output = self.sequential_RNN(tune_tensor)
         #----------------------------------------
@@ -121,12 +125,13 @@ class FolkLSTM(tf.keras.Model):
         return [RNN_unit(int(configs['num_units'])) for _ in range(int(configs['num_layers']))]
 
 
-    def create_RNN_layer(self, cells, go_backwards = False):
+    def create_RNN_layer(self, cells, stateful = False, go_backwards = False):
         return tf.keras.layers.RNN(
             cells,
+            stateful = stateful,
+            go_backwards = go_backwards,
             return_sequences = True,
             zero_output_for_mask = True,
-            go_backwards = go_backwards,
         )
 
 
@@ -272,7 +277,6 @@ class FolkLSTM(tf.keras.Model):
             # Remove batch dimension
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
-            print(predictions)
             predicted_id = tf.random.categorical(predictions, 1)[-1,0].numpy()
             seed = tf.expand_dims([predicted_id], 0)
             current_token = self.vocab['idx_to_word'][str(predicted_id)]
