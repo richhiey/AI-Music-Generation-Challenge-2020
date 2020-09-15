@@ -24,9 +24,9 @@ DEFAULT_TRAIN_CONFIG = {
     'num_epochs': 100,
 }
 
-initial_learning_rate = 0.001
-decay_steps = 10000.0
-decay_rate = 0.9
+initial_learning_rate = 0.01
+decay_steps = 1000.0
+decay_rate = 0.
 end_learning_rate = 0.00001
 learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
   initial_learning_rate, decay_steps, end_learning_rate, power=3
