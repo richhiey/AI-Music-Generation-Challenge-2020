@@ -20,22 +20,13 @@ def scheduler(epoch, lr):
 
 DEFAULT_TRAIN_CONFIG = {
     'print_outputs_frequency': 100,
-    'save_frequency': 1000,
+    'save_frequency': 100,
     'num_epochs': 100,
 }
 
-initial_learning_rate = 0.01
-decay_steps = 1000.0
-decay_rate = 0.
-end_learning_rate = 0.00001
-learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
-  initial_learning_rate, decay_steps, end_learning_rate, power=3
-)
-
-
 class FolkLSTM(tf.keras.Model):
 
-    def __init__(self, model_path, data_dimensions, vocab_path = None, training=True):
+    def __init__(self, model_path, data_dimensions, vocab_path = None, training=True, initial_learning_rate = 0.01):
         super(FolkLSTM, self).__init__()
         
         self.data_dimensions = data_dimensions
@@ -60,10 +51,20 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)
         saved_model_dir = os.path.join(self.model_path, 'folk_lstm')
 
-        self.model = self.__create_model__(self.model_configs, data_dimensions, not training)
+        self.model = self.__create_model__(self.model_configs, data_dimensions, training)
+        
+        if training:
+            end_learning_rate = 0.00001
+            decay_steps = 100000.0
+            decay_rate = 0.
+            learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
+              initial_learning_rate, decay_steps, end_learning_rate, power=3
+            )
 
-        self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-        self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
+            self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+            self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
+        
+        
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -74,18 +75,24 @@ class FolkLSTM(tf.keras.Model):
             os.path.join(self.model_path, 'ckpt'),
             max_to_keep = 3
         )
+        self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
+        if self.ckpt_manager.latest_checkpoint:
+            print("Restored from {}".format(self.ckpt_manager.latest_checkpoint))
+        else:
+            print("Initializing from scratch.")
 
 
     def get_configs(self):
         return self.model_configs
 
 
-    def __create_model__(self, model_configs, data_dimensions, stateful):
+    def __create_model__(self, model_configs, data_dimensions, training):
         #----------------------------------------
-        if stateful:
-            batch_size = 1
-        else:
+        if training:
             batch_size = data_dimensions['batch_size']
+        else:
+            batch_size = 1
+        stateful = not training
         tune = tf.keras.Input(
             batch_input_shape = (batch_size, data_dimensions['max_timesteps'], 1),
         )
@@ -196,11 +203,6 @@ class FolkLSTM(tf.keras.Model):
     def train(self, dataset, configs = DEFAULT_TRAIN_CONFIG):
         train_loss_results = []
         train_accuracy_results = []
-        self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
-        if self.ckpt_manager.latest_checkpoint:
-            print("Restored from {}".format(self.ckpt_manager.latest_checkpoint))
-        else:
-            print("Initializing from scratch.")
 
         for epoch in range(configs['num_epochs']):
             epoch_loss_avg = tf.keras.metrics.Mean()
@@ -262,18 +264,16 @@ class FolkLSTM(tf.keras.Model):
         text_generated = start_tokens
         start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
         start_token_idx = tf.expand_dims(start_token_idx, 0)
-        print(self.vocab)
-
-        while not (current_token is '</s>'):
-                # Add batch dimension
+        seed = tf.convert_to_tensor(start_token_idx, dtype=tf.int32)
+        while (1):
+           # Add batch dimension
             # Pad to max length
-            seed = tf.pad(
-                tf.convert_to_tensor(start_token_idx, dtype=tf.int32),
-                [[0,0], [0, self.data_dimensions['max_timesteps'] - len(start_token_idx)]],
-                mode='CONSTANT'
-            )
+            if (current_token == '</s>'):
+                break
             #seed = tf.squeeze(tf.sparse.to_dense(seed))
             predictions = self.model(seed)
+            #print(seed)
+            #print(predictions)
             # Remove batch dimension
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
@@ -283,6 +283,5 @@ class FolkLSTM(tf.keras.Model):
                 seed = tf.expand_dims([predicted_id], 0)
                 current_token = self.vocab['idx_to_word'][str(predicted_id)]
                 text_generated.append(current_token)
-                print(''.join(text_generated))
 
-        return ''.join(text_generated)
+        return text_generated
