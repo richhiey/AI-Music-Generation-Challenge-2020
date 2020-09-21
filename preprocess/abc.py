@@ -16,6 +16,7 @@ from tqdm import tqdm
 from .constants import  METADATA_KEYS, CONDITIONAL_KEYS, \
                         MAX_TIMESTEPS_FOR_ABC_MODEL, \
                         BASE_ABC_VOCABULARY, \
+                        CONSTRAINT_VOCABULARY, \
                         MIN_TIMESTEPS_FOR_ABC_MODEL
 ####################################################################
 
@@ -90,7 +91,7 @@ class ABCPreProcessor(PreProcessor):
     # Save a bunch of processed ABC tunes as a 
     # TFRecord dataset
     # =============================================
-    def save_as_tfrecord_dataset(self, tokenizer):
+    def save_as_tfrecord_dataset(self, tokenizer, store_constraints = False):
         if not os.path.exists(self.tfrecord_path):
             print('Preparing to save extracted information into a TFRecord file at ' + self.tfrecord_path + ' ...')
             
@@ -109,26 +110,19 @@ class ABCPreProcessor(PreProcessor):
                     tokenized_tune = tokenizer.tokenize_tune(
                         '<s>' + meter + key + tune + '</s>'
                     )
+                    constraints = []
+                    for token in tokenized_tune:
+                        if token in CONSTRAINT_VOCABULARY:
+                            constraints.append(token)
+                        else:
+                            constraints.append('NC')
                     len_tokenized_tune = len(tokenized_tune)
                     if len_tokenized_tune < MAX_TIMESTEPS_FOR_ABC_MODEL:
-                        sequence_example = serialize_example(
-                            tf.pad(
-                                tf.convert_to_tensor(
-                                    tokenized_tune[:-1],
-                                    dtype=tf.int64
-                                ),
-                                [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
-                                mode='CONSTANT'
-                            ),
-                            tf.pad(
-                                tf.convert_to_tensor(
-                                    tokenized_tune[1:],
-                                    dtype=tf.int64
-                                ),
-                                [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(tokenized_tune)]],
-                                mode='CONSTANT'
-                            ),
-                            tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64),
+                        sequence_example = create_sequence_example(
+                            tokenized_tune[:-1],
+                            tokenized_tune[1:],
+                            constraints,
+                            len_tokenized_tune
                         )
                         writer.write(sequence_example)
             writer.close()
@@ -197,13 +191,18 @@ class ABCPreProcessor(PreProcessor):
     # Get data dimensions required to create inputs
     # for models
     # =============================================
-    def get_data_dimensions(self, vocab_dir):
+    def get_data_dimensions(self, vocab_dir, constraints = False):
         with open(os.path.join(vocab_dir, 'tunes_vocab.json'), 'r') as fp:
             len_tunes_vocab = len(json.loads(fp.read())['word_to_idx'])
-        return {
+        data_dims =  {
             'max_timesteps': MAX_TIMESTEPS_FOR_ABC_MODEL - 1,
             'tune_vocab_size': len_tunes_vocab + 1,
         } 
+        if constraints:
+            with open(os.path.join(vocab_dir, 'constraints_vocab.json'), 'r') as fp:
+                len_constraints_vocab = len(json.loads(fp.read())['word_to_idx'])
+            data_dims['constraints_vocab_size'] = len_constraints_vocab + 1
+        return data_dims
     # =============================================
 
 
@@ -307,7 +306,38 @@ class ABCTokenizer():
         return tokens
 
 
-def serialize_example(_input, _output, tune_length):
+def create_sequence_example(_input, _output, _constraints, tune_length):
+    sequence_example = serialize_example(
+        tf.pad(
+            tf.convert_to_tensor(
+                _input,
+                dtype=tf.int64
+            ),
+            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(_input) + 1]],
+            mode='CONSTANT'
+        ),
+        tf.pad(
+            tf.convert_to_tensor(
+                tokenized_tune[1:],
+                dtype=tf.int64
+            ),
+            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(_output) + 1]],
+            mode='CONSTANT'
+        ),
+        tf.pad(
+            tf.convert_to_tensor(
+                tokenized_tune[1:],
+                dtype=tf.int64
+            ),
+            [[0, MAX_TIMESTEPS_FOR_ABC_MODEL - len(_constraints) + 1]],
+            mode='CONSTANT'
+        ),
+        tf.convert_to_tensor(len(tokenized_tune), dtype=tf.int64),
+    )
+    return sequence_example
+
+
+def serialize_example(_input, _output, _constraints, tune_length):
     """
     Creates a tf.Example message ready to be written to a file.
     """
@@ -325,6 +355,13 @@ def serialize_example(_input, _output, tune_length):
                     feature = [
                         tf.train.Feature(
                             int64_list=tf.train.Int64List(value=_input)
+                        )
+                    ]  
+                ),
+                'constraints': tf.train.FeatureList(
+                    feature = [
+                        tf.train.Feature(
+                            int64_list=tf.train.Int64List(value=_constraints)
                         )
                     ]  
                 ),
