@@ -12,12 +12,6 @@ def load_musical_vocab(vocab_path):
     else:
         return {}
 
-def scheduler(epoch, lr):
-    if epoch < 10:
-        return lr
-    else:
-        return lr * tf.math.exp(-0.1)
-
 DEFAULT_TRAIN_CONFIG = {
     'print_outputs_frequency': 100,
     'save_frequency': 100,
