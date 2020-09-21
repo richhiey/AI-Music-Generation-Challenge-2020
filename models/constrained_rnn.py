@@ -24,14 +24,15 @@ DEFAULT_TRAIN_CONFIG = {
 }
 
 
-class FolkLSTM(tf.keras.Model):
+class AnticipationLSTM(tf.keras.Model):
 
     def __init__(self, model_path, data_dimensions, vocab_path = None, training=True, initial_learning_rate = 0.01):
-        super(FolkLSTM, self).__init__()
+        super(AnticipationLSTM, self).__init__()
         
         self.data_dimensions = data_dimensions
         self.model_path = model_path
-        self.vocab = load_musical_vocab(os.path.join(vocab_path, 'tunes_vocab.json'))
+        self.tunes_vocab = load_musical_vocab(os.path.join(vocab_path, 'tunes_vocab.json'))
+        self.constraint_vocab = load_musical_vocab(os.path.join(vocab_path, 'tunes_vocab.json'))
 
         self.tensorboard_logdir = os.path.join(
             model_path,
@@ -51,8 +52,9 @@ class FolkLSTM(tf.keras.Model):
                 print(self.model_configs)
         saved_model_dir = os.path.join(self.model_path, 'folk_lstm')
 
-        self.model = self.__create_model__(self.model_configs, data_dimensions, training)
-        
+        self.music_model = self.__create_model__(self.model_configs, data_dimensions, training)
+        self.contraint_model = self.create_model(self.model_configs, data_dimensions, training)
+
         if training:
             end_learning_rate = 0.00001
             decay_steps = 100000.0
@@ -93,32 +95,47 @@ class FolkLSTM(tf.keras.Model):
         else:
             batch_size = 1
         stateful = not training
+        #----------------------------------------        
+        constraints = tf.keras.Input(
+            batch_input_shape = (batch_size, data_dimensions['max_timesteps'], 1),
+        )
         tune = tf.keras.Input(
             batch_input_shape = (batch_size, data_dimensions['max_timesteps'], 1),
         )
         #----------------------------------------
-        tune_embedding_size = int(model_configs['tune_embedding_size'])
         tune_embedding = tf.keras.layers.Embedding(
             input_dim = data_dimensions['tune_vocab_size'],
-            output_dim = tune_embedding_size,
+            output_dim = int(model_configs['tune_embedding_size']),
             name = 'tune_embedding',
             mask_zero = True
         )(tune)
         tune_tensor = tf.keras.layers.Reshape((-1, tune_embedding_size))(tune_embedding)
+        
+        constraint_embedding = tf.keras.layers.Embedding(
+            input_dim = data_dimensions['constraint_vocab_size'],
+            output_dim = int(model_configs['constraint_embedding_size']),
+            name = 'constraint_embedding',
+            mask_zero = True
+        )(tune)
+        constraint_tensor = tf.keras.layers.Reshape((-1, constraint_embedding_size))(constraint_embedding)
         #----------------------------------------                
-        stacked_cells = tf.keras.layers.StackedRNNCells(
+        stacked_cells_1 = tf.keras.layers.StackedRNNCells(
             self.create_RNN_cells(model_configs['rnn'])
         )
-
-        self.tune_RNN = self.create_RNN_layer(stacked_cells, stateful)
-        self.constraint_rnn = self.create_RNN_layer(stacked_cells, stateful, go_backwards = True)
-
-        rnn_output = self.sequential_RNN(tune_tensor)
+        self.sequential_RNN = self.create_RNN_layer(stacked_cells, stateful)
+        
+        stacked_cells_2 = tf.keras.layers.StackedRNNCells(
+            self.create_RNN_cells(model_configs['rnn'])
+        )
+        self.constraint_rnn = self.create_RNN_layer(stacked_cells, stateful)
+        #----------------------------------------                
+        rnn_inputs = tf.keras.layers.Concatenate([tune_tensor, self.constraint_rnn(constraint_tensor)])
+        rnn_output = self.sequential_RNN(rnn_inputs)
         #----------------------------------------
         next_tokens = tf.keras.layers.Dense(data_dimensions['tune_vocab_size'])(rnn_output)
         #----------------------------------------
         model = tf.keras.Model(
-            inputs=tune,
+            inputs=[tune, constraints],
             outputs=next_tokens
         )
         #----------------------------------------
@@ -143,12 +160,10 @@ class FolkLSTM(tf.keras.Model):
         )
 
 
-    def __call_model__(self, input_sequence, sparse=True, training=False):
+    def __call_model__(self, tune, constraints, sparse=True):
         if sparse:
-            input_sequence = tf.squeeze(tf.sparse.to_dense(input_sequence))
-        return self.model([
-            input_sequence,
-        ])
+            input_sequence = tf.squeeze(tf.sparse.to_dense(tune))
+        return self.model([input_sequence, constraints])
 
 
     def loss_function(self, outputs,  targets, weighted = False):
@@ -162,11 +177,11 @@ class FolkLSTM(tf.keras.Model):
         return tf.reduce_sum(loss_)/tf.reduce_sum(mask)
 
 
-    def call(self, sequence, training=False):
+    def call(self, tune, constraints, training=False):
         return self.__call_model__(sequence['input'])
 
     
-    def grad(self, context, inputs, targets):
+    def grad(self, constraints, inputs, targets):
         with tf.GradientTape() as tape:
             outputs = self.__call_model__(inputs)
             targets = tf.reshape(tf.sparse.to_dense(targets), (-1, 255))
@@ -199,92 +214,3 @@ class FolkLSTM(tf.keras.Model):
     def save_model_checkpoint(self):
         save_path = self.ckpt_manager.save()
         print("Saved checkpoint for step {}: {}".format(int(self.ckpt.step), save_path))
-
-
-    def train(self, dataset, configs = DEFAULT_TRAIN_CONFIG):
-        train_loss_results = []
-        train_accuracy_results = []
-
-        for epoch in range(configs['num_epochs']):
-            epoch_loss_avg = tf.keras.metrics.Mean()
-            epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
-
-            # Training loop
-            for i, (context, sequence) in enumerate(dataset):
-                # Optimize the model
-                loss_value, outputs = self.grad(
-                    context,
-                    sequence['input'],
-                    sequence['output']
-                )
-                self.ckpt.step.assign_add(1)
-                self.update_tensorboard(loss_value, tf.cast(self.ckpt.step, tf.int64))
-                
-                if i % configs['print_outputs_frequency'] == 0:
-                    abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
-                    print('---------- Generated Output -----------')
-                    print(abc_outputs[0])
-                    print('.......................................')
-                    # print('-------------------- Input Sequence --------------------')
-                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
-                    # print('--------------------------------------------------')
-                    # print('-------------------- Generated Sequence --------------------')
-                    # self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
-                    # print('--------------------------------------------------')
-                    # print('-------------------- Target Sequence --------------------')
-                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
-                    # print('--------------------------------------------------')
-                
-                if i % configs['save_frequency'] is 0:
-                    self.save_model_checkpoint()
-            
-                # Track progress
-                epoch_loss_avg.update_state(loss_value)  # Add current batch loss
-                # Compare predicted label to actual label
-                # training=True is needed only if there are layers with different
-                # behavior during training versus inference (e.g. Dropout).
-                # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
-
-            self.save_model_checkpoint()
-            # End epoch
-            train_loss_results.append(epoch_loss_avg.result())
-            train_accuracy_results.append(epoch_accuracy.result())
-
-            if epoch % 50 == 0:
-                print(
-                    "Epoch {:03d}: Loss: {:.3f}, Accuracy: {:.3%}".format(
-                    epoch,
-                    epoch_loss_avg.result(),
-                    epoch_accuracy.result())
-                )
-
-
-    def complete_tune(self, start_tokens, temperature = 1.0):
-
-        current_token = ''
-        text_generated = start_tokens
-        start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
-        start_token_idx     = tf.expand_dims(start_token_idx, 0)
-        seed = tf.convert_to_tensor(start_token_idx, dtype=tf.int32)
-
-        
-        while not (1):
-           # Add batch dimension
-            # Pad to max length
-            if (current_token == '</s>'):
-                break
-            #seed = tf.squeeze(tf.sparse.to_dense(seed))
-            predictions = self.model(seed)
-            #print(seed)
-            #print(predictions)
-            # Remove batch dimension
-            predictions = tf.squeeze(predictions, 0)
-            predictions = predictions / temperature
-            predicted_id = tf.random.categorical(predictions, 1)[-1,0].numpy()
-
-            if predicted_id:
-                seed = tf.expand_dims([predicted_id], 0)
-                current_token = self.vocab['idx_to_word'][str(predicted_id)]
-                text_generated.append(current_token)
-
-        return text_generated
