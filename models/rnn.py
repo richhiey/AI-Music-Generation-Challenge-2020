@@ -2,6 +2,7 @@ import os
 import json
 from datetime import datetime
 import tensorflow as tf
+from tensorboard.plugins.hparams import api as hp
 
 def load_musical_vocab(vocab_path):
     if os.path.exists(vocab_path):
@@ -20,9 +21,8 @@ def scheduler(epoch, lr):
 DEFAULT_TRAIN_CONFIG = {
     'print_outputs_frequency': 100,
     'save_frequency': 100,
-    'num_epochs': 100,
+    'num_epochs': 30,
 }
-
 
 class FolkLSTM(tf.keras.Model):
 
@@ -53,18 +53,16 @@ class FolkLSTM(tf.keras.Model):
 
         self.model = self.__create_model__(self.model_configs, data_dimensions, training)
         
-        if training:
-            end_learning_rate = 0.00001
-            decay_steps = 100000.0
-            decay_rate = 0.
-            learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
-              initial_learning_rate, decay_steps, end_learning_rate, power=3
-            )
+        end_learning_rate = 0.00001
+        decay_steps = 100000.0
+        decay_rate = 0.
+        learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
+            initial_learning_rate, decay_steps, end_learning_rate, power=3
+        )
 
-            self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-            self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
-        
-        
+        self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
+
         self.ckpt = tf.train.Checkpoint(
             step = tf.Variable(1),
             optimizer = self.optimizer,
@@ -110,8 +108,7 @@ class FolkLSTM(tf.keras.Model):
             self.create_RNN_cells(model_configs['rnn'])
         )
 
-        self.tune_RNN = self.create_RNN_layer(stacked_cells, stateful)
-        self.constraint_rnn = self.create_RNN_layer(stacked_cells, stateful, go_backwards = True)
+        self.sequential_RNN = self.create_RNN_layer(stacked_cells, stateful)
 
         rnn_output = self.sequential_RNN(tune_tensor)
         #----------------------------------------
@@ -209,6 +206,7 @@ class FolkLSTM(tf.keras.Model):
             epoch_loss_avg = tf.keras.metrics.Mean()
             epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
 
+            print("============== EPOCH " + str(epoch) + " =================")
             # Training loop
             for i, (context, sequence) in enumerate(dataset):
                 # Optimize the model
@@ -262,18 +260,13 @@ class FolkLSTM(tf.keras.Model):
     def complete_tune(self, start_tokens, temperature = 1.0):
 
         current_token = ''
-        text_generated = start_tokens
+        text_generated = []
         start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
-        start_token_idx     = tf.expand_dims(start_token_idx, 0)
+        start_token_idx = tf.expand_dims(start_token_idx, 0)
         seed = tf.convert_to_tensor(start_token_idx, dtype=tf.int32)
-
-        
-        while not (1):
-           # Add batch dimension
-            # Pad to max length
-            if (current_token == '</s>'):
-                break
-            #seed = tf.squeeze(tf.sparse.to_dense(seed))
+        self.sequential_RNN.reset_states()
+        num_timesteps = 1000
+        for i in range(num_timesteps):
             predictions = self.model(seed)
             #print(seed)
             #print(predictions)
@@ -281,10 +274,11 @@ class FolkLSTM(tf.keras.Model):
             predictions = tf.squeeze(predictions, 0)
             predictions = predictions / temperature
             predicted_id = tf.random.categorical(predictions, 1)[-1,0].numpy()
-
-            if predicted_id:
-                seed = tf.expand_dims([predicted_id], 0)
+            if int(predicted_id):
                 current_token = self.vocab['idx_to_word'][str(predicted_id)]
+                seed = tf.expand_dims([predicted_id], 0)
                 text_generated.append(current_token)
-
-        return text_generated
+                #print(current_token + ' : ' + str(current_token == '</s>'))
+            if (current_token == '</s>'):
+                break
+        return start_tokens + text_generated
