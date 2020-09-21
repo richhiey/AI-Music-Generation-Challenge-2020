@@ -1,0 +1,8 @@
+{
+	"tune_embedding_size": "16",
+	"rnn": {
+		"num_layers": "1",
+		"num_units": "512",
+		"unit_type": "lstm"
+	}
+}
