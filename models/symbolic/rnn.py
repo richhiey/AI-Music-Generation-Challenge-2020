@@ -53,16 +53,15 @@ class FolkLSTM(tf.keras.Model):
 
         self.model = self.__create_model__(self.model_configs, data_dimensions, training)
         
-        if training:
-            end_learning_rate = 0.00001
-            decay_steps = 100000.0
-            decay_rate = 0.
-            learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
-              initial_learning_rate, decay_steps, end_learning_rate, power=3
-            )
+        end_learning_rate = 0.00001
+        decay_steps = 100000.0
+        decay_rate = 0.
+        learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
+          initial_learning_rate, decay_steps, end_learning_rate, power=3
+        )
 
-            self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
-            self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
+        self.cross_entropy = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+        self.optimizer = tf.keras.optimizers.Adam(learning_rate_fn)
         
         
         self.ckpt = tf.train.Checkpoint(
