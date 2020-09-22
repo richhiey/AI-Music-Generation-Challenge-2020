@@ -22,11 +22,19 @@ DEFAULT_TRAIN_CONFIG = {
     'print_outputs_frequency': 100,
     'save_frequency': 100,
     'num_epochs': 100,
+    'validation_freq': 1000,
+    'max_steps_for_model': 100000
+}
+
+DEFAULT_LR_CONFIG = {
+    'initial_lr': 0.001,
+    'final_lr': 0.00001,
+    'decay_steps': 100000,
 }
 
 class FolkLSTM(tf.keras.Model):
 
-    def __init__(self, model_path, data_dimensions, vocab_path = None, training=True, initial_learning_rate = 0.01):
+    def __init__(self, model_path, data_dimensions, vocab_path = None, training=True, learning_rate = DEFAULT_LR_CONFIG):
         super(FolkLSTM, self).__init__()
         
         self.data_dimensions = data_dimensions
@@ -53,8 +61,9 @@ class FolkLSTM(tf.keras.Model):
 
         self.model = self.__create_model__(self.model_configs, data_dimensions, training)
         
-        end_learning_rate = 0.00001
-        decay_steps = 100000.0
+        initial_learning_rate = learning_rate['initial_lr']
+        end_learning_rate = learning_rate['final_lr']
+        decay_steps = learning_rate['decay_steps']
         decay_rate = 0.
         learning_rate_fn = tf.optimizers.schedules.PolynomialDecay(
           initial_learning_rate, decay_steps, end_learning_rate, power=3
@@ -203,60 +212,59 @@ class FolkLSTM(tf.keras.Model):
         train_loss_results = []
         train_accuracy_results = []
 
-        for epoch in range(configs['num_epochs']):
-            epoch_loss_avg = tf.keras.metrics.Mean()
-            epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
+        epoch_loss_avg = tf.keras.metrics.Mean()
+        epoch_accuracy = tf.keras.metrics.SparseCategoricalAccuracy()
+        
+        # Training loop
+        for i, (context, sequence) in enumerate(dataset):
 
-            # Training loop
-            for i, (context, sequence) in enumerate(dataset):
-                # Optimize the model
-                loss_value, outputs = self.grad(
-                    context,
-                    sequence['input'],
-                    sequence['output']
-                )
-                self.ckpt.step.assign_add(1)
-                self.update_tensorboard(loss_value, tf.cast(self.ckpt.step, tf.int64))
-                
-                if i % configs['print_outputs_frequency'] == 0:
-                    abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
-                    print('---------- Generated Output -----------')
-                    print(abc_outputs[0])
-                    print('.......................................')
-                    # print('-------------------- Input Sequence --------------------')
-                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
-                    # print('--------------------------------------------------')
-                    # print('-------------------- Generated Sequence --------------------')
-                    # self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
-                    # print('--------------------------------------------------')
-                    # print('-------------------- Target Sequence --------------------')
-                    # self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
-                    # print('--------------------------------------------------')
-                
-                if i % configs['save_frequency'] is 0:
-                    self.save_model_checkpoint()
+            # Optimize the model
+            loss_value, outputs = self.grad(
+                context,
+                sequence['input'],
+                sequence['output']
+            )
+            self.ckpt.step.assign_add(1)
+            self.update_tensorboard(loss_value, tf.cast(self.ckpt.step, tf.int64))
             
-                # Track progress
-                epoch_loss_avg.update_state(loss_value)  # Add current batch loss
-                # Compare predicted label to actual label
-                # training=True is needed only if there are layers with different
-                # behavior during training versus inference (e.g. Dropout).
-                # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
+            if i % configs['print_outputs_frequency'] == 0:
+                abc_outputs = [self.map_to_abc_notation(output) for output in outputs]
+                print('---------- Generated Output -----------')
+                print(abc_outputs[0])
+                print('.......................................')
+                # print('-------------------- Input Sequence --------------------')
+                # self.map_tokens_to_text(tf.sparse.to_dense(sequence['input']), True)
+                # print('--------------------------------------------------')
+                # print('-------------------- Generated Sequence --------------------')
+                # self.map_tokens_to_text(tf.argmax(tf.nn.softmax(outputs), axis = 1), False)
+                # print('--------------------------------------------------')
+                # print('-------------------- Target Sequence --------------------')
+                # self.map_tokens_to_text(tf.sparse.to_dense(sequence['output']), True)
+                # print('--------------------------------------------------')
+            
+            if i % configs['save_frequency'] is 0:
+                self.save_model_checkpoint()
+        
+            # Track progress
+            epoch_loss_avg.update_state(loss_value)  # Add current batch loss
+            # Compare predicted label to actual label
+            # training=True is needed only if there are layers with different
+            # behavior during training versus inference (e.g. Dropout).
+            # epoch_accuracy.update_state(sequence['output'], self.model(sequence['input'], training=True))
 
-            self.save_model_checkpoint()
             # End epoch
             train_loss_results.append(epoch_loss_avg.result())
             train_accuracy_results.append(epoch_accuracy.result())
+       
+            if (self.ckpt.step % configs['validation_freq']) == 0:
+                print('Step: ' + str(self.ckpt.step) + '\nLoss: ' + str(epoch_loss_avg.result().numpy()) + '\nAccuracy: ' + str(epoch_accuracy.result()))
+                
+            if (self.ckpt.step >= configs['max_steps_for_model']):
+                print('Done with training!')
+                break
 
-            if epoch % 50 == 0:
-                print(
-                    "Epoch {:03d}: Loss: {:.3f}, Accuracy: {:.3%}".format(
-                    epoch,
-                    epoch_loss_avg.result(),
-                    epoch_accuracy.result())
-                )
 
-
+            
     def complete_tune(self, start_tokens, temperature = 1.0):
 
         current_token = ''

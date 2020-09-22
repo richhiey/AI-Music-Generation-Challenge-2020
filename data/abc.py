@@ -185,10 +185,10 @@ class ABCPreProcessor(PreProcessor):
             parsed_dataset
             .filter(self.filter_max_length)
             .map(self.__pad_to_max_length__)
-            #.repeat()
+            .repeat()
+            .cache()
             .batch(batch_size)
             .prefetch(tf.data.experimental.AUTOTUNE)
-            .cache()
         )
     # =============================================
 
