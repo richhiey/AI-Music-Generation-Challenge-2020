@@ -21,10 +21,10 @@ This project is heavily influenced by the work and ideas of [Bob Sturm](https://
 `pip install -r requirements.txt`
 
 ## Data Collection
-After completing the setup, you will have to collect a processed set of tunes to create a Tensorflow Dataset. I have already processed some tunes that I extracted from theSession Data Dump as CSV, so you can find them [here (ADD TUNES!!)](). Since we are trying to model the sequences of notes which make up the music, extra metadata fields are irrelevant and are thus removed.
+After completing the setup, you will have to collect a processed set of tunes to create a Tensorflow Dataset. I have already processed some tunes that I extracted from theSession Data Dump as CSV, so you can find them [here](https://github.com/richhiey1996/AI-Music-Generation-Challenge-2020/wiki/Data-Collection). Since we are trying to model the sequences of notes which make up the music, extra metadata fields are irrelevant and are thus removed.
 
 ## Preprocessing
-Once you have downloaded the above tune collection, you can create a Tensorflow Dataset to get started with the Deep Learning process. The root directory of this project contains 'Preprocessing.ipynb' which holds instructions for converting a set of tunes into a TFRecord Dataset. The details involved with PreProcessing of the data can be found [here (ADD TUNES!!)](). You also might have to configure the directory paths according to instructions mentioned in the Preprocessing notebook.
+Once you have downloaded the above tune collection, you can create a Tensorflow Dataset to get started with the Deep Learning process. The root directory of this project contains 'Preprocessing.ipynb' which holds instructions for converting a set of tunes into a TFRecord Dataset. The details involved with PreProcessing of the data can be found [here](https://github.com/richhiey1996/AI-Music-Generation-Challenge-2020/wiki/Preprocessing). You will also have to configure the directory paths according to instructions mentioned in the Preprocessing notebook.
 
 If everything works well, by the end of this, you end up with directory containing the `tune vocabulary` (for mapping musical symbols to numbers), `tfrecord file` (dataset of tunes for the deep learning models) and the `tunes csv file` (file downloaded during data collection)
 
