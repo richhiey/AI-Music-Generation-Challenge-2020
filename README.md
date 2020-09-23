@@ -6,7 +6,7 @@ Since the above task is that of music generation through text, it also requires 
 
 I would like to mention that I am not an expert at Irish Music, so this is just me looking at the world of Irish Music from the outside, and trying to understand its structures using Deep Learning. Hence, any feedback is welcome. Thanks!
 
-This project is heavily influenced by the work and ideas of [Bob Sturm](https://www.kth.se/profile/bobs) and the [Folk-RNN](https://folkrnn.org/) project. Thanks for all your insights and research!
+This project is heavily influenced by the work and ideas of [Bob Sturm](https://highnoongmt.wordpress.com/about/) and the [Folk-RNN](https://folkrnn.org/) project. Thanks for all your insights and research!
 
 
 ## Setup
