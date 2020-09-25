@@ -1,5 +1,6 @@
 import os
 import json
+import numpy as np
 from datetime import datetime
 import tensorflow as tf
 from tensorboard.plugins.hparams import api as hp
@@ -268,10 +269,13 @@ class FolkLSTM(tf.keras.Model):
     def complete_tune(self, start_tokens, temperature = 1.0):
 
         current_token = ''
-        text_generated = start_tokens
+        text_generated = []
         start_token_idx = [int(self.vocab['word_to_idx'][token]) for token in start_tokens]
         start_token_idx = tf.expand_dims(start_token_idx, 0)
         seed = tf.convert_to_tensor(start_token_idx, dtype=tf.int32)
+        
+        self.sequential_RNN.reset_states()      
+        
         while (1):
            # Add batch dimension
             # Pad to max length
@@ -290,5 +294,4 @@ class FolkLSTM(tf.keras.Model):
                 seed = tf.expand_dims([predicted_id], 0)
                 current_token = self.vocab['idx_to_word'][str(predicted_id)]
                 text_generated.append(current_token)
-
-        return text_generated
+        return start_tokens + text_generated
