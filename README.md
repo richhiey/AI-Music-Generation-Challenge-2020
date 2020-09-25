@@ -26,7 +26,9 @@ After completing the setup, you will have to collect a processed set of tunes to
 ## Preprocessing
 Once you have downloaded the above tune collection, you can create a Tensorflow Dataset to get started with the Deep Learning process. The root directory of this project contains [Preprocessing.ipynb](https://github.com/richhiey1996/AI-Music-Generation-Challenge-2020/blob/master/Preprocessing.ipynb) which holds instructions for converting a set of tunes into a TFRecord Dataset. The details involved with PreProcessing of the data can be found [here](https://github.com/richhiey1996/AI-Music-Generation-Challenge-2020/wiki/Preprocessing). You will also have to configure the directory paths according to instructions mentioned in the Preprocessing notebook.
 
-If everything works well, by the end of this, you end up with directory containing the `tune vocabulary` (for mapping musical symbols to numbers), `tfrecord file` (dataset of tunes for the deep learning models) and the `tunes csv file` (file downloaded during data collection)
+If everything works well, by the end of this, you end up with directory containing the `tune vocabulary` (for mapping musical symbols to numbers), `tfrecord file` (dataset of tunes for the deep learning models) and the `tunes csv file` (file downloaded during data collection
+
+Processed TFRecord Dataset files can be found [here](https://drive.google.com/drive/folders/1HZfZ8LetsaCAZwCMw3Gfo0xoaC_Vg7JD?usp=sharing).
 
 ## Experimenting with Language Models on Irish Folk Tunes
 Lets run some deep learning experiments now. Since we have a dataset of Irish Folk Tunes in a textual format, it is easy to feed data to various language models and see how well they are able to model the language of music. In order to do this, I provide the models with a basic vocabulary of musical words required to generate fluent ABC text. You can find the vocabulary used over [here](). It is automatically generated during the preprocessing stage.
