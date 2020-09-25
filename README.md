@@ -47,7 +47,7 @@ These MIDI files were then moved into Ableton Live and connected to an instrumen
 I did think of coming up with metrics and numbers for evaluating the models, but I couldn't imagine how such a metric would be useful in assessing the quality of a set of tunes. I do plan to implement edit distance matrix calculations between the set of generated tunes and the 365 double jigs. But again, I do not know how assessing the similarity of tunes could tell us about the musical quality of a set of tunes.
 
 ## Just some thoughts
-I really enjoyed working with the ABC Music Notation, and Irish Folk Music in general. I love how the music is constantly moving, but it can still make you feel at ease. I also learnt that though none of these methods are novel or state-of-the-art in any way, but this task can be used as a tool for learning about the possibilites that lie between the worlds of Folk Music (or music in general) and Deep Learning.
+I really enjoyed working with the ABC Music Notation, and Irish Folk Music in general. I love how the music is constantly moving, but it can still make you feel at ease. I also learnt that though none of these methods are novel or state-of-the-art in any way, this task can be used as a tool for learning about the possibilites that lie between the worlds of Folk Music (or music in general) and Deep Learning.
 
 ## Credits and references
 - https://folkrnn.org/
