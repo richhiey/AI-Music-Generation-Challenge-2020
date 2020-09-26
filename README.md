@@ -1,6 +1,8 @@
 # AI-Music-Generation-Challenge-2020
 Hello. This system is called LSTM-512. It also has 512 units inside its [RNN](http://karpathy.github.io/2015/05/21/rnn-effectiveness/) block. 
 
+[GENERATED TUNES](https://drive.google.com/drive/folders/14oErgLoqIgCxI7BVO1WVO722fvgR1iBr?usp=sharing)
+
 Welcome to this repository which contains work being done on modelling [Irish Folk Music](https://en.wikipedia.org/wiki/Irish_traditional_music) using [Deep Learning](http://deeplearning.net/). The task of interest here is to apply [language modelling](https://en.wikipedia.org/wiki/Language_model) techniques to a corpus of [Irish Folk tunes](https://github.com/adactio/TheSession-data) from [TheSession](https://thesession.org/). The [ABC Notation](http://abcnotation.com/) is an important musical notation tool used by various folk musicians around the world to annotate their tunes. So the goal of this little project is to apply language modelling techniques from deep learning on a corpus of Irish Folk Tunes transcribed in the ABC Music Notation Format.
 
 Since the above task is that of [music generation](https://teropa.info/loop/) through text, it also requires thoughts for efficient ways to evaluate the learnt models. Thus, there are small attempts here at trying to evaluate a corpus of computer generated tunes against a smaller corpus of [Irish Double Jigs](http://norbeck.nu/abc/book/). 
